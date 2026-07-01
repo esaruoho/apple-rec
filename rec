@@ -1,0 +1,28 @@
+#!/bin/bash
+# rec — one-word screen + system-audio recorder for macOS.
+#
+# Starts recording the whole screen + ALL system audio immediately, saving to
+# ./yyyy-MM-dd-HH-mm-ss.mov IN THE FOLDER YOU RUN IT FROM. Press Ctrl-C to stop
+# and finalize. No microphone, no BlackHole/Loopback — audio comes straight off
+# the system audio engine via ScreenCaptureKit.
+#
+# Usage:
+#   rec                      # whole screen + all system audio → ./<timestamp>.mov
+#   rec --app Renoise        # screen + ONLY that app's audio
+#   rec --also-mic           # + your microphone as a 2nd track
+#   rec --out ~/foo.mov      # custom path
+#   rec --list               # displays + audible app names
+#
+# Any flag passes through to screen-audio-record; --app overrides --system-audio.
+# Builds the binary on first run (or when the source is newer).
+
+set -e
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN="$DIR/screen-audio-record"
+SRC="$DIR/screen-audio-record.swift"
+
+if [ ! -x "$BIN" ] || [ "$SRC" -nt "$BIN" ]; then
+  "$DIR/build.sh" >&2
+fi
+
+exec "$BIN" --system-audio "$@"

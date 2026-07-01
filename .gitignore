@@ -1,0 +1,4 @@
+# compiled binary — built via ./build.sh or on first `./rec`
+/screen-audio-record
+# recordings
+*.mov
