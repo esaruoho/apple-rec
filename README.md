@@ -61,14 +61,30 @@ rec --list               # list displays + audible running apps (for --app)
 - Output is one `.mov`: **H.264** video + **AAC** audio (a **2nd AAC track** for the mic
   when used), muxed via `AVAssetWriter`.
 
-### Recording both system audio and the mic
+### Recording both system audio and the mic — and the YouTube trap
 
-Yes — pass `--mic` (or toggle it on live). System audio and the microphone are captured
-as **two separate audio tracks** in the same `.mov`. QuickTime plays the system-audio
-track by default; most editors (Final Cut, Premiere, DaVinci) show both tracks so you can
-mix them. If you want them **pre-mixed into a single track**, that requires real-time PCM
-summation of the two streams (see the design note in the recorder source) — not yet built;
-two tracks is the robust default.
+Pass `--mic` (or toggle it on live). System audio and the microphone are captured as **two
+separate audio tracks** in the same `.mov` — so Final Cut / Premiere / DaVinci can balance
+them independently.
+
+**⚠️ YouTube and QuickTime play only the FIRST audio track.** Upload a raw 2-track recording
+and your **voice (track 2) is silently dropped**. So `rec --mic` **also writes a
+`<name>-flat.mov`** with system + mic **mixed into one track** — that's the file you upload.
+(iMovie can't split embedded tracks either; see `rec-audio` below.)
+
+### `rec-audio` — post-process for editing
+
+```bash
+rec-audio split   recording.mov            # → recording-system.m4a + recording-mic.m4a
+rec-audio flatten recording.mov [-o out]   # → recording-flat.mov (video + one mixed track)
+```
+
+- **`split`** extracts each audio stream to its own `.m4a`. **iMovie recipe:** import the
+  `.mov` (video + system audio), then drag `recording-mic.m4a` onto the timeline as a second
+  audio track — now you can balance voice vs app sound independently.
+- **`flatten`** mixes system + mic into one track on a video-**passthrough** `.mov` (no
+  re-encode, no quality loss) via `AVAssetReaderAudioMixOutput`. Plays both everywhere —
+  QuickTime, iMovie, YouTube. This is what `--auto-flatten` runs for you.
 
 ### Direct binary
 
