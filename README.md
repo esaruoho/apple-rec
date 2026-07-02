@@ -46,15 +46,29 @@ reboot; that's an OS policy the tool can't suppress.
 ```bash
 rec                      # whole screen + ALL system audio → ./<timestamp>.mov
 rec --app Renoise        # screen + ONLY that app's audio (nothing else leaks in)
-rec --also-mic           # + your microphone as a second audio track
+rec --mic                # start with your microphone recording too (2nd audio track)
+rec --reveal             # reveal + select the finished file in Finder on stop
 rec --out ~/demo.mov     # custom output path
 rec --list               # list displays + audible running apps (for --app)
 ```
 
 - **Stop** a terminal recording with **Ctrl-C** — it catches the signal and finalizes the
   `.mov`. Do not re-run `rec` to stop (that starts a second recording).
+- **Toggle the mic on/off mid-recording** without stopping: send the process `SIGUSR1`,
+  e.g. `kill -USR1 $(pgrep -n screen-audio-record)`. The mic goes to its own track, so
+  muting just stops writing mic samples. Start muted (default) or hot (`--mic`).
 - `--app <name>` overrides `--system-audio` — single-app audio wins.
-- Output is one `.mov`: **H.264** video + **AAC** audio, muxed via `AVAssetWriter`.
+- Output is one `.mov`: **H.264** video + **AAC** audio (a **2nd AAC track** for the mic
+  when used), muxed via `AVAssetWriter`.
+
+### Recording both system audio and the mic
+
+Yes — pass `--mic` (or toggle it on live). System audio and the microphone are captured
+as **two separate audio tracks** in the same `.mov`. QuickTime plays the system-audio
+track by default; most editors (Final Cut, Premiere, DaVinci) show both tracks so you can
+mix them. If you want them **pre-mixed into a single track**, that requires real-time PCM
+summation of the two streams (see the design note in the recorder source) — not yet built;
+two tracks is the robust default.
 
 ### Direct binary
 
