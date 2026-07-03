@@ -12,9 +12,7 @@ That's it. It starts recording the whole screen **+ all system audio** immediate
 saves `./yyyy-MM-dd-HH-mm-ss.mov` **in the folder you ran it from**. Press **Ctrl-C** (or
 type `q` + Enter) to stop and finalize.
 
-<!-- Demo GIF goes here once generated — see "Demo" below. Uncomment when demo.gif exists:
 ![rec in action](demo.gif)
--->
 
 ## Why this exists
 
