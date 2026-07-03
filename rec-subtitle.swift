@@ -77,15 +77,17 @@ func which(_ name: String) -> String? {
 /// Transcribe with the openai-whisper `whisper` CLI (the one 3rd-party dependency —
 /// everything else here is Apple-native). Install it with `./install-deps.sh`.
 /// Returns the <inputstem>.srt path in outStem's directory.
-func transcribe(_ audioOrVideo: String, model: String?, outStem: String) -> String {
+func transcribe(_ audioOrVideo: String, model: String?, lang: String, outStem: String) -> String {
     let outDir = (outStem as NSString).deletingLastPathComponent
     let inStem = ((audioOrVideo as NSString).lastPathComponent as NSString).deletingPathExtension
     guard let w = which("whisper") else {
         die("`whisper` not found — run ./install-deps.sh (or `pip install openai-whisper`) to enable subtitles")
     }
     note("⧉ transcribing \((audioOrVideo as NSString).lastPathComponent) via whisper (openai-whisper)…")
+    // Force the language (default en) — Whisper auto-detect misfires on short/accented clips.
+    let langArgs = (lang.lowercased() == "auto") ? [] : ["--language", lang]
     let args = [w, audioOrVideo, "--model", model ?? "base",
-                "--output_format", "srt", "--output_dir", outDir, "--fp16", "False"]
+                "--output_format", "srt", "--output_dir", outDir, "--fp16", "False"] + langArgs
     let p = Process(); p.launchPath = "/bin/bash"; p.arguments = ["-lc", shquote(args)]
     do { try p.run() } catch { die("failed to launch whisper: \(error.localizedDescription)") }
     p.waitUntilExit()
@@ -232,6 +234,7 @@ let doBurn = args.contains("--burn")
 // standalone always transcribes locally (no remote worker).
 if args.contains("--mini") { note("(standalone transcribes locally — no remote worker)") }
 let model = opt("--model")
+let lang = opt("--lang") ?? "en"   // default English; --lang auto to auto-detect
 let micAudio = opt("--mic")
 let stem = (videoPath as NSString).deletingPathExtension
 
@@ -239,7 +242,7 @@ let stem = (videoPath as NSString).deletingPathExtension
 var srt = opt("--srt") ?? (stem + ".srt")
 if !FileManager.default.fileExists(atPath: srt) {
     let source = micAudio ?? videoPath
-    let produced = transcribe(source, model: model, outStem: stem + ".srt")
+    let produced = transcribe(source, model: model, lang: lang, outStem: stem + ".srt")
     // whisper names by the SOURCE stem; normalize to <video-stem>.srt for predictability.
     if produced != stem + ".srt" { try? FileManager.default.removeItem(atPath: stem + ".srt"); try? FileManager.default.copyItem(atPath: produced, toPath: stem + ".srt") }
     srt = stem + ".srt"

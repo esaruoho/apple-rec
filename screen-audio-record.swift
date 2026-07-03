@@ -4,16 +4,11 @@
 // NO loopback driver (BlackHole/Loopback), NO virtual cable. Scope the audio to a single
 // application so you capture only that app's sound (e.g. Renoise), or grab all system audio.
 //
-// Build:  ./build.sh   (or: swiftc -O -o screen-audio-record screen-audio-record.swift \
-//               -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia \
-//               -framework CoreGraphics -framework CoreImage -framework AppKit)
-// Usage:  ./rec                                 # whole screen + all system audio → ./<timestamp>.mov
-//         ./rec --mic                            # + microphone; also writes a YouTube-ready -flat.mov
-//         ./rec --pip                            # bake the webcam into a corner as a CIRCLE (speaking head)
-//         ./rec --mic --pip --burn               # full pipeline: + subtitles burned in (transcribes locally)
+// Build:  ./build.sh   (frameworks: ScreenCaptureKit AVFoundation CoreMedia CoreGraphics CoreImage AppKit)
+// Usage:  ./rec                    # screen + all system audio → ./<timestamp>.mov
+//         ./rec --mic --pip --burn # full pipeline: mic + webcam circle + subtitles (local, English)
 //         ./screen-audio-record --list
-// Live mic toggle mid-recording: kill -USR1 <pid>
-// Subtitles need the openai-whisper CLI — run ./install-deps.sh once.
+// Live mic toggle: kill -USR1 <pid>.  Subtitles need openai-whisper — run ./install-deps.sh once.
 //
 // https://github.com/esaruoho/apple-rec  (mirror of esaruoho/apple bin/screen-audio-record)
 
@@ -44,6 +39,7 @@ struct Options {
     var pipCamera: String?    // camera name substring (default: front/built-in)
     var burn = false          // after stop, transcribe + burn subtitles (one-command pipeline)
     var burnMini = false      // OPT-IN: route transcription to the Mini (default is local + reliable)
+    var burnLang = "en"       // subtitle language (default English; "auto" to auto-detect)
 }
 
 func parseArgs() -> Options {
@@ -67,6 +63,7 @@ func parseArgs() -> Options {
         case "--pip-camera":   o.pipCamera = it.next()
         case "--burn", "--burn-local": o.burn = true            // transcribe LOCALLY + burn (default)
         case "--burn-mini":    o.burn = true; o.burnMini = true // opt-in: route to the Mini
+        case "--burn-lang":    o.burnLang = it.next() ?? "en"   // subtitle language (default en)
         case "--list", "-l":   o.list = true
         case "--help", "-h":   printUsage(); exit(0)
         default: FileHandle.standardError.write("unknown arg: \(a)\n".data(using: .utf8)!); exit(2)
@@ -96,6 +93,7 @@ func printUsage() {
       --pip-camera <name>    camera name substring (default: built-in / front camera)
       --burn                 on stop: transcribe LOCALLY + burn subtitles → -subtitled.mov
       --burn-mini            opt-in: route transcription to the Mini (falls back to local)
+      --burn-lang <code>     subtitle language (default en; "auto" to auto-detect)
 
     Press Ctrl-C to stop and finalize the file.
     Live mic toggle: send SIGUSR1 to this process — `kill -USR1 <pid>` — to turn the
@@ -522,7 +520,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
         FileHandle.standardError.write("⧉ transcribing + burning subtitles (\(opts.burnMini ? "via the Mini" : "locally")) — this can take a minute…\n".data(using: .utf8)!)
         let p = Process()
         p.launchPath = tool
-        var a = [inPath, "--burn"]
+        var a = [inPath, "--burn", "--lang", opts.burnLang]
         if opts.burnMini { a.append("--mini") }
         p.arguments = a
         do { try p.run() } catch {
