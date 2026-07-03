@@ -86,6 +86,27 @@ rec-audio flatten recording.mov [-o out]   # → recording-flat.mov (video + one
   re-encode, no quality loss) via `AVAssetReaderAudioMixOutput`. Plays both everywhere —
   QuickTime, iMovie, YouTube. This is what `--auto-flatten` runs for you.
 
+### `rec-subtitle` — Whisper `.srt` + burn-in
+
+```bash
+rec-subtitle recording.mov            # → recording.srt (upload to YouTube as captions)
+rec-subtitle recording.mov --burn     # → recording-subtitled.mov (subtitles painted in)
+```
+
+- **Sidecar:** transcribes the audio to `recording.srt`. Upload the video + this `.srt` as a
+  caption track. `--mic recording-mic.m4a` transcribes the voice-only track for a cleaner result.
+- **`--burn`:** hard-paints the subtitles into a new `-subtitled.mov` — Apple-native
+  `AVVideoCompositionCoreAnimationTool`, white text + black outline, bottom-center, timed per cue.
+- **Transcription** uses the openai-whisper CLI: `pip install openai-whisper`. `--model tiny|base|
+  small|medium|large-v3` trades speed for accuracy (default `base`).
+
+### One command — the whole pipeline
+
+```bash
+rec --mic --pip --burn      # record (screen + system + mic + webcam circle) → on Ctrl-C:
+                            # flatten (YouTube) + transcribe + burn subtitles, all in one go
+```
+
 ### Direct binary
 
 `rec` is a thin wrapper over `screen-audio-record`, which you can call directly for full

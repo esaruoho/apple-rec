@@ -11,5 +11,10 @@ swiftc -O -o "$DIR/screen-audio-record" "$DIR/screen-audio-record.swift" \
 # --auto-flatten finds it.
 swiftc -O -target "${ARCH}-apple-macos13.0" -o "$DIR/rec-audio" "$DIR/rec-audio.swift" \
   -framework AVFoundation -framework CoreMedia
+# rec-subtitle (.srt + burn-in). Sits next to screen-audio-record so `rec --burn` finds it.
+# Transcription needs openai-whisper on PATH (`pip install openai-whisper`).
+swiftc -O -target "${ARCH}-apple-macos13.0" -o "$DIR/rec-subtitle" "$DIR/rec-subtitle.swift" \
+  -framework AVFoundation -framework CoreMedia -framework QuartzCore -framework AppKit
 echo "built: $DIR/screen-audio-record"
 echo "built: $DIR/rec-audio"
+echo "built: $DIR/rec-subtitle"

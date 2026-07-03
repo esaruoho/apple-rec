@@ -28,8 +28,12 @@ BIN="$DIR/screen-audio-record"
 SRC="$DIR/screen-audio-record.swift"
 RECAUDIO="$DIR/rec-audio"
 RECAUDIO_SRC="$DIR/rec-audio.swift"
+RECSUB="$DIR/rec-subtitle"
+RECSUB_SRC="$DIR/rec-subtitle.swift"
 
-if [ ! -x "$BIN" ] || [ "$SRC" -nt "$BIN" ] || [ ! -x "$RECAUDIO" ] || [ "$RECAUDIO_SRC" -nt "$RECAUDIO" ]; then
+if [ ! -x "$BIN" ] || [ "$SRC" -nt "$BIN" ] \
+   || [ ! -x "$RECAUDIO" ] || [ "$RECAUDIO_SRC" -nt "$RECAUDIO" ] \
+   || [ ! -x "$RECSUB" ] || [ "$RECSUB_SRC" -nt "$RECSUB" ]; then
   "$DIR/build.sh" >&2
 fi
 
