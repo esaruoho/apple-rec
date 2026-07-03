@@ -10,9 +10,10 @@
 // Usage:  ./rec                                 # whole screen + all system audio → ./<timestamp>.mov
 //         ./rec --mic                            # + microphone; also writes a YouTube-ready -flat.mov
 //         ./rec --pip                            # bake the webcam into a corner as a CIRCLE (speaking head)
+//         ./rec --mic --pip --burn               # full pipeline: + subtitles burned in (transcribes locally)
 //         ./screen-audio-record --list
 // Live mic toggle mid-recording: kill -USR1 <pid>
-// (--burn subtitles is apple-only — it needs the whisp CLI; not in this standalone.)
+// Subtitles need the openai-whisper CLI — run ./install-deps.sh once.
 //
 // https://github.com/esaruoho/apple-rec  (mirror of esaruoho/apple bin/screen-audio-record)
 
@@ -42,7 +43,7 @@ struct Options {
     var pipShape = "circle"   // circle (default) | square
     var pipCamera: String?    // camera name substring (default: front/built-in)
     var burn = false          // after stop, transcribe + burn subtitles (one-command pipeline)
-    var burnLocal = false     // transcribe on THIS mac instead of routing to the Mini
+    var burnMini = false      // OPT-IN: route transcription to the Mini (default is local + reliable)
 }
 
 func parseArgs() -> Options {
@@ -64,8 +65,8 @@ func parseArgs() -> Options {
         case "--pip-shape":    o.pipShape = it.next() ?? "circle"
         case "--pip-square":   o.pipShape = "square"
         case "--pip-camera":   o.pipCamera = it.next()
-        case "--burn":         o.burn = true   // transcribe + burn subtitles on stop
-        case "--burn-local":   o.burn = true; o.burnLocal = true
+        case "--burn", "--burn-local": o.burn = true            // transcribe LOCALLY + burn (default)
+        case "--burn-mini":    o.burn = true; o.burnMini = true // opt-in: route to the Mini
         case "--list", "-l":   o.list = true
         case "--help", "-h":   printUsage(); exit(0)
         default: FileHandle.standardError.write("unknown arg: \(a)\n".data(using: .utf8)!); exit(2)
@@ -93,8 +94,8 @@ func printUsage() {
       --pip-shape <s>        circle (default) | square       --pip-square = square
       --pip-scale <f>        webcam size as a fraction of screen width (default 0.16)
       --pip-camera <name>    camera name substring (default: built-in / front camera)
-      --burn                 on stop: transcribe (on the Mini) + burn subtitles → -subtitled.mov
-      --burn-local           like --burn but transcribe on THIS mac (faster, hot; offline)
+      --burn                 on stop: transcribe LOCALLY + burn subtitles → -subtitled.mov
+      --burn-mini            opt-in: route transcription to the Mini (falls back to local)
 
     Press Ctrl-C to stop and finalize the file.
     Live mic toggle: send SIGUSR1 to this process — `kill -USR1 <pid>` — to turn the
@@ -518,11 +519,11 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
             FileHandle.standardError.write("--burn: rec-subtitle not found next to the recorder — skipping\n".data(using: .utf8)!)
             return nil
         }
-        FileHandle.standardError.write("⧉ transcribing + burning subtitles (\(opts.burnLocal ? "local" : "on the Mini")) — this can take a few minutes…\n".data(using: .utf8)!)
+        FileHandle.standardError.write("⧉ transcribing + burning subtitles (\(opts.burnMini ? "via the Mini" : "locally")) — this can take a minute…\n".data(using: .utf8)!)
         let p = Process()
         p.launchPath = tool
         var a = [inPath, "--burn"]
-        if !opts.burnLocal { a.append("--mini") }
+        if opts.burnMini { a.append("--mini") }
         p.arguments = a
         do { try p.run() } catch {
             FileHandle.standardError.write("--burn failed to launch rec-subtitle: \(error.localizedDescription)\n".data(using: .utf8)!)
