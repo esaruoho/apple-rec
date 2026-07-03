@@ -86,7 +86,8 @@ func transcribe(_ audioOrVideo: String, model: String?, lang: String, outStem: S
     note("⧉ transcribing \((audioOrVideo as NSString).lastPathComponent) via whisper (openai-whisper)…")
     // Force the language (default en) — Whisper auto-detect misfires on short/accented clips.
     let langArgs = (lang.lowercased() == "auto") ? [] : ["--language", lang]
-    let args = [w, audioOrVideo, "--model", model ?? "base",
+    let chosen = model ?? (lang.lowercased() == "en" ? "small.en" : "small")
+    let args = [w, audioOrVideo, "--model", chosen,
                 "--output_format", "srt", "--output_dir", outDir, "--fp16", "False"] + langArgs
     let p = Process(); p.launchPath = "/bin/bash"; p.arguments = ["-lc", shquote(args)]
     do { try p.run() } catch { die("failed to launch whisper: \(error.localizedDescription)") }
