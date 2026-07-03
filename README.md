@@ -52,8 +52,10 @@ rec --out ~/demo.mov     # custom output path
 rec --list               # list displays + audible running apps (for --app)
 ```
 
-- **Stop** a terminal recording with **Ctrl-C** — it catches the signal and finalizes the
-  `.mov`. Do not re-run `rec` to stop (that starts a second recording).
+- **Stop** a terminal recording with **Ctrl-C** (or type **`q`** + Enter) — it catches the
+  signal and finalizes the `.mov`, then prints the **final recording length** and whether the
+  mic was recorded. Do not re-run `rec` to stop (that starts a second recording). On start it
+  also states plainly whether the **microphone is ON**.
 - **Toggle the mic on/off mid-recording** without stopping: send the process `SIGUSR1`,
   e.g. `kill -USR1 $(pgrep -n screen-audio-record)`. The mic goes to its own track, so
   muting just stops writing mic samples. Start muted (default) or hot (`--mic`).
