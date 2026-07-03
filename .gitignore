@@ -1,4 +1,14 @@
-# compiled binary — built via ./build.sh or on first `./rec`
+# Compiled binaries — build artifacts, NOT checked in. They're rebuilt from the .swift
+# sources by ./build.sh (or automatically on first ./rec). The sources stay in git; the
+# arch-specific, unsigned binaries do not. (`rec` itself is a shell script and IS tracked.)
 /screen-audio-record
-# recordings
+/rec-audio
+/rec-subtitle
+
+# macOS cruft
+.DS_Store
+
+# recordings / sample output
 *.mov
+*.srt
+*.m4a
