@@ -57,7 +57,7 @@ func parseSRT(_ path: String) -> [Cue] {
     return cues
 }
 
-// MARK: - transcription via whisp
+// MARK: - transcription (openai-whisper CLI — a 3rd-party dependency)
 
 func shquote(_ args: [String]) -> String {
     args.map { "'\($0.replacingOccurrences(of: "'", with: "'\\''"))'" }.joined(separator: " ")
@@ -74,85 +74,25 @@ func which(_ name: String) -> String? {
     return (s?.isEmpty == false) ? s : nil
 }
 
-/// Transcribe locally. Prefer Esa's whisp wrapper if present; otherwise fall back to the
-/// public openai-whisper `whisper` CLI (so the standalone works with just `pip install
-/// openai-whisper`). Returns the <inputstem>.srt path in outStem's directory.
+/// Transcribe with the openai-whisper `whisper` CLI (the one 3rd-party dependency —
+/// everything else here is Apple-native). Install it with `./install-deps.sh`.
+/// Returns the <inputstem>.srt path in outStem's directory.
 func transcribe(_ audioOrVideo: String, model: String?, outStem: String) -> String {
     let outDir = (outStem as NSString).deletingLastPathComponent
     let inStem = ((audioOrVideo as NSString).lastPathComponent as NSString).deletingPathExtension
-    let whisp = ("~/work/whisp/whisp" as NSString).expandingTildeInPath
-    let p = Process(); p.launchPath = "/bin/bash"
-    if FileManager.default.fileExists(atPath: whisp) {
-        note("⧉ transcribing \((audioOrVideo as NSString).lastPathComponent) via whisp (Whisper)…")
-        var args = [whisp, "--out", outDir]
-        if let model { args += ["--model", model] }
-        args.append(audioOrVideo)
-        p.arguments = ["-lc", shquote(args)]
-    } else if let w = which("whisper") {
-        note("⧉ transcribing \((audioOrVideo as NSString).lastPathComponent) via whisper (openai-whisper)…")
-        let args = [w, audioOrVideo, "--model", model ?? "base",
-                    "--output_format", "srt", "--output_dir", outDir, "--fp16", "False"]
-        p.arguments = ["-lc", shquote(args)]
-    } else {
-        die("no transcription engine — install openai-whisper (`pip install openai-whisper`) or ~/work/whisp/whisp")
+    guard let w = which("whisper") else {
+        die("`whisper` not found — run ./install-deps.sh (or `pip install openai-whisper`) to enable subtitles")
     }
-    do { try p.run() } catch { die("failed to launch transcription: \(error.localizedDescription)") }
+    note("⧉ transcribing \((audioOrVideo as NSString).lastPathComponent) via whisper (openai-whisper)…")
+    let args = [w, audioOrVideo, "--model", model ?? "base",
+                "--output_format", "srt", "--output_dir", outDir, "--fp16", "False"]
+    let p = Process(); p.launchPath = "/bin/bash"; p.arguments = ["-lc", shquote(args)]
+    do { try p.run() } catch { die("failed to launch whisper: \(error.localizedDescription)") }
     p.waitUntilExit()
-    if p.terminationStatus != 0 { die("transcription exited \(p.terminationStatus)") }
+    if p.terminationStatus != 0 { die("whisper exited \(p.terminationStatus)") }
     let srt = (outDir as NSString).appendingPathComponent(inStem + ".srt")
     guard FileManager.default.fileExists(atPath: srt) else { die("no .srt produced at \(srt)") }
     return srt
-}
-
-/// Is the Mac Mini whisp pipeline present on this host? (whisp-submit + the Syncthing inbox.)
-func miniAvailable() -> Bool {
-    let submit = ("~/work/whisp-transcripts/whisp-submit" as NSString).expandingTildeInPath
-    var isDir: ObjCBool = false
-    let inbox = ("~/work/comms/queue/whisp-inbox" as NSString).expandingTildeInPath
-    return FileManager.default.fileExists(atPath: submit)
-        && FileManager.default.fileExists(atPath: inbox, isDirectory: &isDir) && isDir.boolValue
-}
-
-/// Route transcription to the always-on Mac Mini via the Syncthing whisp pipeline
-/// (whisp-submit drops the file into ~/work/comms/queue/whisp-inbox; the Mini worker
-/// transcribes and the .srt returns via git/Syncthing). Keeps heavy Whisper off THIS mac.
-/// @built — the round-trip depends on the Mini worker; poll locations are best-effort.
-func transcribeOnMini(_ audio: String, stem: String) -> String {
-    let submit = ("~/work/whisp-transcripts/whisp-submit" as NSString).expandingTildeInPath
-    guard FileManager.default.fileExists(atPath: submit) else {
-        die("whisp-submit not found — use --burn-local to transcribe on this mac")
-    }
-    let inStem = ((audio as NSString).lastPathComponent as NSString).deletingPathExtension
-    note("⧉ submitting to the Mini (whisp-submit) — transcribing off-device to keep this mac cool…")
-    let p = Process(); p.launchPath = submit; p.arguments = [audio]
-    do { try p.run() } catch { die("failed to launch whisp-submit: \(error.localizedDescription)") }
-    p.waitUntilExit()
-    if p.terminationStatus != 0 { die("whisp-submit exited \(p.terminationStatus)") }
-    let dirs = [("~/work/whisp-transcripts/transcripts" as NSString).expandingTildeInPath,
-                ("~/work/comms/queue/whisp-results" as NSString).expandingTildeInPath]
-    note("   waiting for the transcript to come back from the Mini (Ctrl-C to give up)…")
-    let deadline = Date(timeIntervalSinceNow: 1800)   // 30 min
-    while Date() < deadline {
-        for dir in dirs {
-            if let hit = findSRT(named: inStem, under: dir) {
-                let dst = stem + ".srt"
-                try? FileManager.default.removeItem(atPath: dst)
-                try? FileManager.default.copyItem(atPath: hit, toPath: dst)
-                note("   ✓ transcript returned from the Mini")
-                return dst
-            }
-        }
-        Thread.sleep(forTimeInterval: 5)
-    }
-    die("timed out (30 min) waiting for the Mini transcript — check the Mini whisp-worker, or re-run with --burn-local")
-}
-
-func findSRT(named stem: String, under dir: String) -> String? {
-    guard let en = FileManager.default.enumerator(atPath: dir) else { return nil }
-    for case let f as String in en where f.hasSuffix(".srt") && (f as NSString).lastPathComponent.hasPrefix(stem) {
-        return (dir as NSString).appendingPathComponent(f)
-    }
-    return nil
 }
 
 // MARK: - burn-in (Core Animation)
@@ -288,25 +228,21 @@ let videoPath = (video as NSString).expandingTildeInPath
 args.removeFirst()
 func opt(_ name: String) -> String? { if let i = args.firstIndex(of: name), i + 1 < args.count { return (args[i+1] as NSString).expandingTildeInPath }; return nil }
 let doBurn = args.contains("--burn")
-let useMini = args.contains("--mini")   // route transcription to the Mac Mini (keep CPU off this mac)
+// --mini / --burn-local are accepted for CLI compatibility with the recorder, but this
+// standalone always transcribes locally (no remote worker).
+if args.contains("--mini") { note("(standalone transcribes locally — no remote worker)") }
 let model = opt("--model")
 let micAudio = opt("--mic")
 let stem = (videoPath as NSString).deletingPathExtension
 
-// Get the .srt: use --srt if given, else an existing sidecar, else transcribe
-// (on the Mini with --mini, otherwise on this mac).
+// Get the .srt: use --srt if given, else an existing sidecar, else transcribe locally.
 var srt = opt("--srt") ?? (stem + ".srt")
 if !FileManager.default.fileExists(atPath: srt) {
     let source = micAudio ?? videoPath
-    if useMini && miniAvailable() {
-        srt = transcribeOnMini(source, stem: stem)
-    } else {
-        if useMini { note("Mini whisp pipeline not found here — transcribing locally instead") }
-        let produced = transcribe(source, model: model, outStem: stem + ".srt")
-        // whisp/whisper name by the SOURCE stem; normalize to <video-stem>.srt for predictability.
-        if produced != stem + ".srt" { try? FileManager.default.removeItem(atPath: stem + ".srt"); try? FileManager.default.copyItem(atPath: produced, toPath: stem + ".srt") }
-        srt = stem + ".srt"
-    }
+    let produced = transcribe(source, model: model, outStem: stem + ".srt")
+    // whisper names by the SOURCE stem; normalize to <video-stem>.srt for predictability.
+    if produced != stem + ".srt" { try? FileManager.default.removeItem(atPath: stem + ".srt"); try? FileManager.default.copyItem(atPath: produced, toPath: stem + ".srt") }
+    srt = stem + ".srt"
 }
 print("✓ \(srt)")
 

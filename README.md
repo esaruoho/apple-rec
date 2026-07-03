@@ -97,8 +97,10 @@ rec-subtitle recording.mov --burn     # → recording-subtitled.mov (subtitles p
   caption track. `--mic recording-mic.m4a` transcribes the voice-only track for a cleaner result.
 - **`--burn`:** hard-paints the subtitles into a new `-subtitled.mov` — Apple-native
   `AVVideoCompositionCoreAnimationTool`, white text + black outline, bottom-center, timed per cue.
-- **Transcription** uses the openai-whisper CLI: `pip install openai-whisper`. `--model tiny|base|
-  small|medium|large-v3` trades speed for accuracy (default `base`).
+- **Transcription** is the one feature that needs a 3rd-party tool (the openai-whisper
+  `whisper` CLI). Install it once: **`./install-deps.sh`** (runs `pip install openai-whisper`
+  + checks ffmpeg). `--model tiny|base|small|medium|large-v3` trades speed for accuracy
+  (default `base`). Everything else — recording, PiP, flatten, burn-in — is Apple-native, no deps.
 
 ### One command — the whole pipeline
 
