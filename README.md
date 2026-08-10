@@ -1,8 +1,8 @@
-# apple-rec — `rec`
+# apple-rec — `rec` + RecBurn.app
 
-Record your **screen and your Mac's audio at once**, from the terminal, with **no
-loopback driver** — no BlackHole, no Loopback, no "route the speakers into the
-microphone" hack.
+Record your **screen and your Mac's audio at once**, from the terminal *or* from a
+menu-bar app, with **no loopback driver** — no BlackHole, no Loopback, no "route the
+speakers into the microphone" hack.
 
 ```bash
 rec
@@ -13,6 +13,18 @@ saves `./yyyy-MM-dd-HH-mm-ss.mov` **in the folder you ran it from**. Press **Ctr
 type `q` + Enter) to stop and finalize.
 
 ![rec in action](demo.gif)
+
+### The family
+
+| | what it adds |
+|---|---|
+| **`rec`** | screen + all system audio → `.mov`. The base. |
+| **`recburn`** | `rec` + microphone + webcam circle + subtitles burned in on stop |
+| **`recburnclick`** | `recburn` + a live **`CLICKS: n`** counter burned into the video |
+| **RecBurn.app** | the same pipeline as a menu-bar app — toggles for mic / webcam / subtitles / click counter, each with a corner picker |
+
+Each one *chains* to the one above it, so they never drift apart. Anything a wrapper adds
+can be subtracted again: `recburnclick --no-pip --no-burn`.
 
 ## Why this exists
 
@@ -37,6 +49,11 @@ ln -s "$PWD/rec" /usr/local/bin/rec   # optional: put `rec` on your PATH
 ```
 
 `rec` also auto-builds on first run, so `./rec` works straight after clone.
+
+Building the **menu-bar app** as well needs nothing extra — `./build.sh` produces
+`RecBurn.app` alongside the CLI (`./build.sh --cli` skips it if you only want the
+terminal tools, and then SwiftPM isn't needed at all). `./build.sh --install` copies the
+app to `/Applications` and links the CLI onto your `PATH`.
 
 ### What ships vs. what you build
 
@@ -88,6 +105,36 @@ rec --list               # list displays + audible running apps (for --app)
   e.g. `kill -USR1 $(pgrep -n screen-audio-record)`. The mic goes to its own track, so
   muting just stops writing mic samples. Start muted (default) or hot (`--mic`).
 - `--app <name>` overrides `--system-audio` — single-app audio wins.
+
+### Counting clicks
+
+```bash
+recburnclick                       # everything recburn does + a live CLICKS: n badge
+recburnclick --clicks-corner br    # tl (default) | tr | bl | br
+recburnclick --clicks-label TAPS   # relabel the badge
+rec --clicks                       # or just add it to plain rec
+```
+
+The counter starts at 0 when recording starts and goes up on every left / right / middle
+mouse-down, so a demo video carries its own click count instead of being narrated. It
+needs **no Accessibility permission and installs no event tap**: macOS already tallies
+mouse-downs per session (`CGEventSource.counterForEventType`), so the recorder just reads
+that number and subtracts its start-of-recording baseline. The badge uses monospaced
+digits so it doesn't jitter as the number climbs.
+
+### RecBurn.app (menu bar)
+
+Same engine, driven from the menu bar: **Start / Stop Recording**, and toggles for
+**Record Microphone**, **Webcam PiP (circle)** + position, **Click Counter** + position,
+and **Burn Subtitles**. Settings persist, and any recording can be started with its own
+settings via the `recburn://` URL scheme:
+
+```
+recburn://start?mic=1&pip=1&clicks=1&clickcorner=br&corner=tl&burn=0
+```
+
+It also registers macOS **Services** (RecBurn: Toggle / Start / Stop Recording), so a
+recording can be bound to a system keyboard shortcut.
 - Output is one `.mov`: **H.264** video + **AAC** audio (a **2nd AAC track** for the mic
   when used), muxed via `AVAssetWriter`.
 

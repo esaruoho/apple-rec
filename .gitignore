@@ -5,6 +5,11 @@
 /rec-audio
 /rec-subtitle
 
+# app build artifacts — RecBurn.app is assembled by ./build.sh, not committed
+/RecBurn.app/
+/.build/
+/bin/
+
 # macOS cruft
 .DS_Store
 

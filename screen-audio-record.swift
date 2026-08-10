@@ -4,13 +4,15 @@
 // NO loopback driver (BlackHole/Loopback), NO virtual cable. Scope the audio to a single
 // application so you capture only that app's sound (e.g. Renoise), or grab all system audio.
 //
-// Build:  ./build.sh   (frameworks: ScreenCaptureKit AVFoundation CoreMedia CoreGraphics CoreImage AppKit)
-// Usage:  ./rec                    # screen + all system audio → ./<timestamp>.mov
-//         ./rec --mic --pip --burn # full pipeline: mic + webcam circle + subtitles (local, English)
-//         ./screen-audio-record --list
-// Live mic toggle: kill -USR1 <pid>.  Subtitles need openai-whisper — run ./install-deps.sh once.
+// Build:  swiftc -O -o bin/screen-audio-record bin/screen-audio-record.swift \
+//               -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia \
+//               -framework CoreGraphics -framework AppKit
+// Usage:  screen-audio-record --list
+//         screen-audio-record --app Renoise --out ~/rec.mov        # screen + ONLY that app's audio
+//         screen-audio-record --system-audio --out ~/rec.mov       # screen + ALL system audio
+//         screen-audio-record --app Renoise --also-mic --out ~/rec.mov
 //
-// https://github.com/esaruoho/apple-rec  (mirror of esaruoho/apple bin/screen-audio-record)
+// FEATURE-CARD >> features/screen-audio-record.feature
 
 import Foundation
 import ScreenCaptureKit
@@ -41,6 +43,56 @@ struct Options {
     var burnMini = false      // OPT-IN: route transcription to the Mini (default is local + reliable)
     var burnLang = "en"       // subtitle language (default English; "auto" to auto-detect)
     var burnModel: String?    // whisper model (default: rec-subtitle picks small.en / small)
+    var burnPrompt: String?   // vocabulary bias → rec-subtitle --prompt → whisper --initial_prompt
+    var clicks = false        // burn a live "CLICKS: n" counter into the video
+    var clicksCorner = "tl"   // tl|tr|bl|br
+    var clicksSeed = 0        // start the counter at n (demo / headless verification)
+    var clicksLabel = "CLICKS"
+}
+
+// MARK: - Click counting without an event tap
+//
+// The obvious way to count clicks is a CGEventTap or an NSEvent global monitor — both of
+// which need Accessibility permission and hand us every event just to increment a number.
+// macOS already keeps the tally: CGEventSource.counterForEventType reports how many events
+// of a type the session has seen. No tap, no TCC prompt, no event stream. We take a
+// baseline when recording starts and the counter is simply the delta since.
+final class ClickCounter {
+    private let baseline: Int
+    private let seed: Int
+
+    init(seed: Int = 0) {
+        self.seed = seed
+        self.baseline = ClickCounter.sessionTotal()
+    }
+
+    static func sessionTotal() -> Int {
+        let state = CGEventSourceStateID.combinedSessionState
+        return [CGEventType.leftMouseDown, .rightMouseDown, .otherMouseDown]
+            .reduce(0) { $0 + Int(CGEventSource.counterForEventType(state, eventType: $1)) }
+    }
+
+    /// Clicks since the recording began (left + right + middle/other).
+    var count: Int { seed + max(0, ClickCounter.sessionTotal() - baseline) }
+}
+
+// MARK: - Typed handoff manifest
+//
+// The recorder is the pipeline's orchestrator: it alone knows every artifact it produced
+// (base capture, flattened YouTube version, .srt, subtitled video) and which one is final.
+// Instead of downstream consumers (RecBurn.app, a Shortcut, a Service) scraping the human
+// "✓ …" prose off stdout — brittle the day the wording changes — the recorder emits a typed
+// manifest: a sidecar `<base-stem>.recburn.json` AND a single sentinel stdout line
+// `RECBURN-MANIFEST: <path>`. Structured data flows between actions; nobody greps prose.
+struct RecBurnManifest: Codable {
+    var schema = "recburn/1"
+    var base: String          // the raw ScreenCaptureKit capture (always present)
+    var flat: String?         // YouTube-ready single-track mix (only if --auto-flatten + mic used)
+    var subtitled: String?    // hard-burned-subtitle video (only if --burn succeeded)
+    var srt: String?          // soft caption sidecar (only if --burn produced one)
+    var final: String         // the artifact to reveal / hand off (subtitled ?? flat ?? base)
+    var lengthSeconds: Double
+    var micRecorded: Bool
 }
 
 func parseArgs() -> Options {
@@ -51,7 +103,18 @@ func parseArgs() -> Options {
         case "--app":          o.appName = it.next()
         case "--display":      o.displayIndex = Int(it.next() ?? "0") ?? 0
         case "--system-audio": o.systemAudio = true
+        case "--clicks", "--click-counter": o.clicks = true
+        case "--clicks-corner": o.clicksCorner = it.next() ?? "tl"
+        case "--clicks-label":  o.clicksLabel = it.next() ?? "CLICKS"
+        case "--clicks-seed":   o.clicksSeed = Int(it.next() ?? "0") ?? 0
         case "--also-mic", "--mic": o.alsoMic = true
+        // Negations exist so a CHAINED wrapper can be subtracted from: recburnclick →
+        // recburn adds --mic --pip --burn, and a trailing --no-pip must be able to undo
+        // one of them without the user rebuilding the whole command from rec.
+        case "--no-mic":       o.alsoMic = false
+        case "--no-pip":       o.pip = false
+        case "--no-burn":      o.burn = false
+        case "--no-clicks":    o.clicks = false
         case "--fps":          o.fps = Int(it.next() ?? "60") ?? 60
         case "--out", "-o":    o.outPath = (it.next() as NSString?)?.expandingTildeInPath ?? ""
         case "--reveal":       o.reveal = true
@@ -66,6 +129,7 @@ func parseArgs() -> Options {
         case "--burn-mini":    o.burn = true; o.burnMini = true // opt-in: route to the Mini
         case "--burn-lang":    o.burnLang = it.next() ?? "en"   // subtitle language (default en)
         case "--burn-model":   o.burnModel = it.next()          // whisper model (default small.en)
+        case "--burn-prompt":  o.burnPrompt = it.next()         // vocabulary bias (proper nouns)
         case "--list", "-l":   o.list = true
         case "--help", "-h":   printUsage(); exit(0)
         default: FileHandle.standardError.write("unknown arg: \(a)\n".data(using: .utf8)!); exit(2)
@@ -82,6 +146,13 @@ func printUsage() {
       --app <name>           capture only this app's screen windows AND its audio
       --system-audio         capture the whole display + all system audio
       --display <n>          display index from --list (default 0 = main)
+      --no-mic / --no-pip / --no-burn / --no-clicks
+                             turn one off again — for subtracting from a chained wrapper
+                             (recburnclick → recburn → rec each ADD flags; these remove)
+      --clicks               burn a live "CLICKS: n" counter into the video (counts every
+                             left/right/middle mouse-down from the moment recording starts)
+      --clicks-corner <c>    tl (default) | tr | bl | br
+      --clicks-label <s>     label before the number (default "CLICKS")
       --also-mic, --mic      start with your microphone recording (2nd audio track)
       --fps <n>              frame rate (default 60)
       --out, -o <path>       output .mov (default: ./yyyy-MM-dd-HH-mm-ss.mov in the current folder)
@@ -227,6 +298,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
 
         // The mic ALWAYS gets its own track + stream output, even if it starts muted,
         // so a live SIGUSR1 toggle can turn it on later without rebuilding the writer.
+        if opts.clicks { clickCounter = ClickCounter(seed: opts.clicksSeed) }
         setupWriter(width: cfg.width, height: cfg.height)
         if opts.pip { _ = setupCamera() }
 
@@ -273,10 +345,10 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
         videoInput.expectsMediaDataInRealTime = true
         writer.add(videoInput)
 
-        // For PiP we composite each screen frame + the webcam corner into a fresh pixel
-        // buffer, so the video input is fed via a pixel-buffer adaptor instead of raw
-        // screen sample buffers.
-        if opts.pip {
+        // Any compositing — the webcam corner, the click counter, or both — means we
+        // build each output frame ourselves and feed the video input through a
+        // pixel-buffer adaptor instead of passing raw screen sample buffers straight in.
+        if opts.pip || opts.clicks {
             let attrs: [String: Any] = [
                 kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
                 kCVPixelBufferWidthKey as String: width,
@@ -335,8 +407,8 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
 
         switch type {
         case .screen:
-            if opts.pip, let px = CMSampleBufferGetImageBuffer(sampleBuffer) {
-                compositePiP(screen: px, pts: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+            if opts.pip || opts.clicks, let px = CMSampleBufferGetImageBuffer(sampleBuffer) {
+                compositeFrame(screen: px, pts: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
             } else if videoInput.isReadyForMoreMediaData {
                 videoInput.append(sampleBuffer)
             }
@@ -357,10 +429,47 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
         cameraLock.lock(); latestCameraBuffer = px; cameraLock.unlock()
     }
 
-    /// Composite the latest webcam frame into a corner of the screen frame and append the
-    /// result. If no webcam frame has arrived yet (or the pool is momentarily empty), the
-    /// screen frame is appended unchanged — a recording is never lost to PiP.
-    func compositePiP(screen: CVPixelBuffer, pts: CMTime) {
+    // Re-rendering the text every frame would be wasteful and would shimmer; the badge
+    // only changes when the number does, so cache it by (count, width).
+    var clickCounter: ClickCounter?
+    private var badgeCache: (n: Int, w: CGFloat, img: CIImage)?
+
+    /// "CLICKS: 12" as a rounded dark plate with white monospaced-digit text. Monospaced
+    /// digits matter: proportional ones make the badge jitter as the number changes.
+    func clickBadge(_ n: Int, baseW: CGFloat) -> CIImage? {
+        if let c = badgeCache, c.n == n, c.w == baseW { return c.img }
+        let fontSize = max(18, baseW * 0.022)
+        let text = "\(opts.clicksLabel): \(n)"
+        let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let str = NSAttributedString(string: text, attributes: attrs)
+        let tSize = str.size()
+        let padX = fontSize * 0.62, padY = fontSize * 0.34
+        let w = Int(ceil(tSize.width + padX * 2)), h = Int(ceil(tSize.height + padY * 2))
+        guard w > 0, h > 0,
+              let cg = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: CGColorSpaceCreateDeviceRGB(),
+                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        let nsCtx = NSGraphicsContext(cgContext: cg, flipped: false)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
+        let plate = NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h)),
+                                 xRadius: fontSize * 0.35, yRadius: fontSize * 0.35)
+        NSColor(calibratedWhite: 0, alpha: 0.66).setFill()
+        plate.fill()
+        str.draw(at: NSPoint(x: padX, y: padY))
+        NSGraphicsContext.restoreGraphicsState()
+        guard let img = cg.makeImage() else { return nil }
+        let ci = CIImage(cgImage: img)
+        badgeCache = (n, baseW, ci)
+        return ci
+    }
+
+    /// Build one output frame: the screen, plus the webcam corner (--pip) and/or the live
+    /// click counter (--clicks), and append it. If an overlay can't be produced the screen
+    /// frame is appended unchanged — a recording is never lost to a decoration.
+    func compositeFrame(screen: CVPixelBuffer, pts: CMTime) {
         guard let adaptor = videoAdaptor, let ctx = ciContext,
               adaptor.assetWriterInput.isReadyForMoreMediaData else { return }
         guard let pool = adaptor.pixelBufferPool else {
@@ -420,6 +529,22 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
                 image = overlay.transformed(by: CGAffineTransform(translationX: x, y: y)).composited(over: image)
             }
         }
+
+        // "CLICKS: 12" burned into the frame, so the count is IN the video rather than
+        // something the viewer has to be told afterwards.
+        if let counter = clickCounter, let badge = clickBadge(counter.count, baseW: baseW) {
+            let margin = baseW * 0.025
+            let bw = badge.extent.width, bh = badge.extent.height
+            let x: CGFloat, y: CGFloat   // CIImage origin is bottom-left
+            switch opts.clicksCorner {
+            case "bl": x = margin;              y = margin
+            case "br": x = baseW - bw - margin; y = margin
+            case "tr": x = baseW - bw - margin; y = baseH - bh - margin
+            default:   x = margin;              y = baseH - bh - margin   // tl
+            }
+            image = badge.transformed(by: CGAffineTransform(translationX: x, y: y)).composited(over: image)
+        }
+
         ctx.render(image, to: dst)
         adaptor.append(dst, withPresentationTime: pts)
     }
@@ -567,6 +692,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
         p.launchPath = tool
         var a = [inPath, "--burn", "--lang", opts.burnLang]
         if let m = opts.burnModel { a += ["--model", m] }
+        if let pr = opts.burnPrompt { a += ["--prompt", pr] }
         if opts.burnMini { a.append("--mini") }
         p.arguments = a
         do { try p.run() } catch {
@@ -581,6 +707,21 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
         }
         FileHandle.standardError.write("--burn: rec-subtitle exited \(p.terminationStatus)\n".data(using: .utf8)!)
         return nil
+    }
+
+    /// Write the typed handoff: a `<base-stem>.recburn.json` sidecar (durable, re-readable by
+    /// any consumer — the app, a Shortcut, a Service) plus one sentinel stdout line pointing at
+    /// it. This replaces stdout-prose scraping as the machine-readable result of the pipeline.
+    func writeManifest(_ m: RecBurnManifest) {
+        let path = (m.base as NSString).deletingPathExtension + ".recburn.json"
+        let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? enc.encode(m) else { return }
+        do {
+            try data.write(to: URL(fileURLWithPath: path))
+            print("RECBURN-MANIFEST: \(path)")
+        } catch {
+            FileHandle.standardError.write("manifest: could not write \(path): \(error.localizedDescription)\n".data(using: .utf8)!)
+        }
     }
 
     var finishing = false
@@ -604,13 +745,23 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
                         // single-mixed-track copy (YouTube/QuickTime play only the FIRST audio
                         // track, so a 2-track file would lose the voice). Reveal that one.
                         var revealTarget = self.opts.outPath
+                        var flatOut: String?, subOut: String?, srtOut: String?
                         if self.opts.autoFlatten && self.micEverOn,
                            let flat = self.makeYouTubeVersion(self.opts.outPath) {
-                            revealTarget = flat
+                            revealTarget = flat; flatOut = flat
                         }
-                        if self.opts.burn, let subbed = self.makeSubtitledVersion(revealTarget) {
-                            revealTarget = subbed
+                        if self.opts.burn {
+                            let subInput = revealTarget   // rec-subtitle names the .srt off THIS stem
+                            if let subbed = self.makeSubtitledVersion(subInput) {
+                                subOut = subbed; revealTarget = subbed
+                                let srt = (subInput as NSString).deletingPathExtension + ".srt"
+                                if FileManager.default.fileExists(atPath: srt) { srtOut = srt }
+                            }
                         }
+                        // Emit the typed handoff so consumers never parse the prose above.
+                        self.writeManifest(RecBurnManifest(
+                            base: self.opts.outPath, flat: flatOut, subtitled: subOut, srt: srtOut,
+                            final: revealTarget, lengthSeconds: secs, micRecorded: self.micEverOn))
                         if self.opts.reveal {
                             let p = Process()
                             p.launchPath = "/usr/bin/open"

@@ -11,9 +11,7 @@
 //                                           + ONE mixed audio track (system+mic summed).
 //                                           Plays both everywhere (iMovie / QuickTime / YouTube).
 //
-// Build:  ./build.sh  (targets macOS 13 so it runs on Ventura/Sonoma/Sequoia+; the export API
-//         is version-branched via #available). Or: swiftc -O -target <arch>-apple-macos13.0 \
-//         -o rec-audio rec-audio.swift -framework AVFoundation -framework CoreMedia
+// Build:  swiftc -O -o bin/rec-audio bin/rec-audio.swift -framework AVFoundation -framework CoreMedia
 
 import Foundation
 import AVFoundation
