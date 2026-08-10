@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import CoreServices
+import Carbon.HIToolbox   // RegisterEventHotKey — global hotkey, no Accessibility grant
 
 // Pure AppKit status-item app so a single click on the red icon STOPS the recording.
 // (MenuBarExtra always opens a menu on click — it can't do click-to-stop.)
@@ -57,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.servicesProvider = serviceProvider
         NSUpdateDynamicServices()
 
+        registerResetHotKey()
         c.refreshPermissions()
         if !c.allGranted { showPermissions() }   // pop the verifier until everything's granted
     }
@@ -153,6 +155,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         clickParent.submenu = clickMenu
         m.addItem(clickParent)
 
+        // ⌃⌥⌘Space is a GLOBAL hotkey (Carbon), so it fires while any app is frontmost —
+        // the menu item is the discoverable, clickable twin of it.
+        let reset = item("Reset Click Count to 0", #selector(resetClicks), enabled: c.clickCounter)
+        reset.keyEquivalent = " "
+        reset.keyEquivalentModifierMask = [.control, .option, .command]
+        m.addItem(reset)
+
         m.addItem(item("Burn Subtitles (on-device, on stop)", #selector(toggleBurn), on: c.burnSubtitles))
 
         m.addItem(.separator())
@@ -171,6 +180,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let corner = sender.representedObject as? RecBurnController.PiPCorner { c.pipCorner = corner }
     }
     @objc private func toggleClicks() { c.clickCounter.toggle() }
+    @objc func resetClicks() { c.resetClickCount() }
+
+    // MARK: ⌃⌥⌘Space — zero the click counter, from anywhere
+    //
+    // Carbon's RegisterEventHotKey is the Apple-shipped way to own a key combination
+    // system-wide WITHOUT an Accessibility grant (an NSEvent global monitor or a CGEventTap
+    // would both need one). It only works from a real NSApplication, which is why the
+    // hotkey lives here in the menu-bar app rather than in the CLI recorder — the CLI path
+    // is `recburn-click-reset`, and both end up sending the same SIGUSR2.
+    private var resetHotKeyRef: EventHotKeyRef?
+
+    private func registerResetHotKey() {
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                                 eventKind: UInt32(kEventHotKeyPressed))
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, userData -> OSStatus in
+            guard let userData, let event else { return noErr }
+            var hkID = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                              EventParamType(typeEventHotKeyID), nil,
+                              MemoryLayout<EventHotKeyID>.size, nil, &hkID)
+            guard hkID.id == 1 else { return noErr }
+            let me = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
+            DispatchQueue.main.async { MainActor.assumeIsolated { me.resetClicks() } }
+            return noErr
+        }, 1, &spec, selfPtr, nil)
+
+        var ref: EventHotKeyRef?
+        let id = EventHotKeyID(signature: OSType(0x52424B31), id: 1)   // 'RBK1'
+        let mods = UInt32(controlKey | optionKey | cmdKey)
+        let status = RegisterEventHotKey(UInt32(kVK_Space), mods, id,
+                                         GetApplicationEventTarget(), 0, &ref)
+        if status != noErr {
+            // Most likely another app already owns ⌃⌥⌘Space. Say so in the log rather than
+            // failing silently — a hotkey that never fires is otherwise unexplainable.
+            NSLog("RecBurn: ⌃⌥⌘Space registration failed with OSStatus %d (is it taken?)", status)
+        }
+        resetHotKeyRef = ref
+    }
     @objc private func setClicksCorner(_ sender: NSMenuItem) {
         if let corner = sender.representedObject as? RecBurnController.PiPCorner { c.clicksCorner = corner }
     }

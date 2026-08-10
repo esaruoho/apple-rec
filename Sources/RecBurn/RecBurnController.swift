@@ -91,6 +91,31 @@ final class RecBurnController {
         killStaleCaptures()
     }
 
+    /// Zero the burned-in CLICKS counter without stopping the recording (⌃⌥⌘Space).
+    ///
+    /// SIGUSR2 is the recorder's documented seam for this — the same shape as SIGUSR1 for
+    /// the mic — so it works whether the recording was started from this app or from the
+    /// `recburnclick` CLI. We signal our own child when we have one, and otherwise fall
+    /// back to any running recorder, so the hotkey still does the obvious thing during a
+    /// terminal recording.
+    @discardableResult
+    func resetClickCount() -> Bool {
+        if let p = recProc, p.isRunning {
+            kill(p.processIdentifier, SIGUSR2)
+            lastStatus = "↺ click counter reset to 0"
+            onStateChange?()
+            return true
+        }
+        let k = Process()
+        k.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        k.arguments = ["-USR2", "-f", "screen-audio-record"]
+        try? k.run(); k.waitUntilExit()
+        let hit = k.terminationStatus == 0
+        lastStatus = hit ? "↺ click counter reset to 0" : "nothing is recording"
+        onStateChange?()
+        return hit
+    }
+
     /// A prior force-quit could orphan the recorder (holding screen/webcam). On a fresh launch
     /// nothing is legitimately recording, so reap any leftover.
     private func killStaleCaptures() {

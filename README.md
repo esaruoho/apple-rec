@@ -122,11 +122,22 @@ mouse-downs per session (`CGEventSource.counterForEventType`), so the recorder j
 that number and subtracts its start-of-recording baseline. The badge uses monospaced
 digits so it doesn't jitter as the number climbs.
 
+**Resetting the count mid-recording** — `⌃⌥⌘Space` puts the counter back to 0 without
+stopping or splitting the recording (RecBurn.app must be running to own the hotkey). From a
+script, a Loupedeck/Stream Deck button or a MIDI mapping, use:
+
+```bash
+recburn-click-reset        # sends SIGUSR2 to whatever is recording; exits 1 if nothing is
+```
+
+The reset is a **signal**, not a keystroke handler, which is why every trigger reaches it —
+the same seam as the live mic toggle (`SIGUSR1`).
+
 ### RecBurn.app (menu bar)
 
 Same engine, driven from the menu bar: **Start / Stop Recording**, and toggles for
 **Record Microphone**, **Webcam PiP (circle)** + position, **Click Counter** + position,
-and **Burn Subtitles**. Settings persist, and any recording can be started with its own
+and **Burn Subtitles**, plus **Reset Click Count to 0** (⌃⌥⌘Space). Settings persist, and any recording can be started with its own
 settings via the `recburn://` URL scheme:
 
 ```
