@@ -21,6 +21,7 @@ type `q` + Enter) to stop and finalize.
 | **`rec`** | screen + all system audio → `.mov`. The base. |
 | **`recburn`** | `rec` + microphone + webcam circle + subtitles burned in on stop |
 | **`recburnclick`** | `recburn` + a live **`CLICKS: n`** counter burned into the video |
+| **`recburn-redact`** | cover something out of a finished recording, re-encoding only the affected span |
 | **RecBurn.app** | the same pipeline as a menu-bar app — toggles for mic / webcam / subtitles / click counter, each with a corner picker |
 
 Each one *chains* to the one above it, so they never drift apart. Anything a wrapper adds
@@ -132,6 +133,32 @@ recburn-click-reset        # sends SIGUSR2 to whatever is recording; exits 1 if 
 
 The reset is a **signal**, not a keystroke handler, which is why every trigger reaches it —
 the same seam as the live mic toggle (`SIGUSR1`).
+
+### Redacting something out of a finished recording
+
+A screencast catches things you did not mean to publish — a message window, an account
+id, someone else's email. `recburn-redact` covers it **without re-rendering the whole
+video**: only the keyframe span containing those frames is re-encoded, everything else is
+a bit-exact stream copy, and the audio is remuxed untouched.
+
+```bash
+recburn-redact take.mov --find                 # no timestamps needed: sweep and report
+recburn-redact take.mov --find-text "Olga"     # also hunt a name you supply
+recburn-redact take.mov --scan 22:29-22:33     # contact sheet to find exact frames
+recburn-redact take.mov --probe 22:30.5        # one frame + a coordinate grid
+recburn-redact take.mov --at 22:29.4-22:32.2 --box 0,76,3024,355 --method black
+```
+
+`--find` sweeps the recording with **on-device Apple Vision OCR** — nothing leaves the
+Mac — and reports every window that looks like an exposure, so you need no timestamps at
+all. It never auto-redacts from a regex match: only you can tell a real exposure from your
+own public account name.
+
+After writing, it verifies the result against the source (frame count, duration, audio
+packets, no post-splice shift, clean decode) and **refuses to call the output finished if
+any check fails**. That check has caught a real one: on some files the splice leaves every
+frame after the cut a couple of frames early against the audio while frame counts and
+audio still look perfect. If that happens, fall back to a single full re-encode.
 
 ### RecBurn.app (menu bar)
 

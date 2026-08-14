@@ -26,7 +26,12 @@ swiftc -O -target ${ARCH}-apple-macos13.0 -o "$BIN/rec-audio" rec-audio.swift \
   -framework AVFoundation -framework CoreMedia
 swiftc -O -target ${ARCH}-apple-macos13.0 -o "$BIN/rec-subtitle" rec-subtitle.swift \
   -framework AVFoundation -framework CoreMedia -framework QuartzCore -framework AppKit
-chmod +x rec recburn recburnclick recburn-url recburn-youtube
+# vision-ocr powers `recburn-redact --find` (on-device Apple Vision; nothing leaves the
+# Mac). Built here so the redact tool is self-contained rather than reaching into another
+# checkout for a helper.
+swiftc -O -target ${ARCH}-apple-macos13.0 -o "$BIN/vision-ocr" vision-ocr.swift \
+  -framework Vision -framework AppKit -framework CoreImage
+chmod +x rec recburn recburnclick recburn-redact recburn-url recburn-youtube
 
 if [ "${1:-}" = "--cli" ]; then
   echo "✓ CLI ready: ./rec , ./recburn , ./recburnclick"
