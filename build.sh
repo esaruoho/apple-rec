@@ -33,6 +33,11 @@ swiftc -O -target ${ARCH}-apple-macos13.0 -o "$BIN/vision-ocr" vision-ocr.swift 
   -framework Vision -framework AppKit -framework CoreImage
 chmod +x rec recburn recburnclick recburn-redact recburn-url recburn-youtube
 
+# The proper-noun vocabulary is pure logic, so it is checked headlessly HERE rather than by
+# discovering mid-screencast that "Paketti" came out as "Pucketty" again.
+echo "▸ checking the vocabulary rules…"
+"$BIN/rec-subtitle" --self-test
+
 if [ "${1:-}" = "--cli" ]; then
   echo "✓ CLI ready: ./rec , ./recburn , ./recburnclick"
   exit 0
@@ -46,6 +51,7 @@ echo "▸ assembling RecBurn.app…"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$APPBIN" "$APP/Contents/MacOS/RecBurn"
 for e in "${ENGINE[@]}"; do cp "$BIN/$e" "$APP/Contents/MacOS/$e"; done   # engine beside the app binary
+cp "$ROOT/recburn-vocabulary.json" "$APP/Contents/MacOS/"                  # rec-subtitle looks beside itself
 cp "$BIN/recburn-url" "$BIN/recburn-youtube" "$APP/Contents/MacOS/"        # helpers the App Intents resolve next to themselves
 [ -f "$ROOT/AppIcon.icns" ] && cp "$ROOT/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns" || true
 cat > "$APP/Contents/Info.plist" <<'PLIST'
@@ -115,7 +121,7 @@ if [ "${1:-}" = "--install" ]; then
   done
   echo "✓ installed /Applications/RecBurn.app"
   if [ -n "$LINKDIR" ]; then
-    for e in "${ENGINE[@]}" rec recburn recburnclick recburn-url recburn-youtube; do ln -sf "$ROOT/$e" "$LINKDIR/$e"; done
+    for e in "${ENGINE[@]}" rec recburn recburnclick recburn-url recburn-youtube recburn-vocabulary.json; do ln -sf "$ROOT/$e" "$LINKDIR/$e"; done
     echo "✓ linked rec/recburn into $LINKDIR  (make sure it's on your PATH)"
   else
     echo "• CLI ready here — add it to PATH:  export PATH=\"$ROOT:\$PATH\""

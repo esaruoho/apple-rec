@@ -217,6 +217,37 @@ rec-subtitle recording.mov --burn     # → recording-subtitled.mov (subtitles p
   + checks ffmpeg). `--model tiny|base|small|medium|large-v3` trades speed for accuracy
   (default `base`). Everything else — recording, PiP, flatten, burn-in — is Apple-native, no deps.
 
+### Your own words — the vocabulary
+
+Whisper spells proper nouns phonetically, so a name it has never seen comes back mangled:
+*Paketti* → "Pucketty" / "Pocketty", *Renoise* → "Reno", *Lackluster* → "Lacklustre". The fix
+is applied at **both** ends of the transcription:
+
+1. **Bias** — the canonical spellings go to Whisper as `--initial_prompt`, so it is much more
+   likely to get them right in the first place.
+2. **Repair** — the finished `.srt` is swept and rewritten, which is what makes it *certain*.
+   Listed mishearings are replaced, and unlisted ones are caught by sound (Soundex), so you do
+   not have to enumerate every way a name can be mangled. A word that is real English is never
+   rewritten — "I put the **packet** in the tracker" stays exactly as spoken.
+
+Edit `recburn-vocabulary.json` (or `~/.config/recburn/vocabulary.json`, or a
+`.recburn-vocabulary.json` next to the recording) — no rebuild:
+
+```json
+{
+  "terms": ["Renoise", "Paketti", "Lackluster"],
+  "corrections": { "Paketti": ["pucketty", "pocketty"], "Renoise": ["reno"] },
+  "fuzzy": true
+}
+```
+
+```bash
+rec-subtitle --fix-srt old-take.srt     # align a transcript you already have
+rec-subtitle rec.mov --vocab my.json    # a different vocabulary for this take
+recburn --no-vocab                      # transcribe raw, no bias and no sweep
+rec-subtitle --self-test                # check the rules (build.sh runs this)
+```
+
 ### One command — the whole pipeline
 
 ```bash
