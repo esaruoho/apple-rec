@@ -1,41 +1,23 @@
 #!/bin/bash
-# rec — one-word screen + system-audio recorder for macOS.
+# rec — one-word screen + system-audio recorder.
 #
 # Starts recording the whole screen + ALL system audio immediately, saving to
-# ./yyyy-MM-dd-HH-mm-ss.mov IN THE FOLDER YOU RUN IT FROM. Press Ctrl-C to stop
-# and finalize. No microphone hack, no BlackHole/Loopback — audio comes straight
-# off the system audio engine via ScreenCaptureKit.
+# ./yyyy-MM-dd-HH-mm-ss.mov IN THE CURRENT FOLDER. Press Ctrl-C to stop and finalize;
+# press Ctrl-C AGAIN to abandon any post-processing still running and get the shell back.
+# No microphone, no BlackHole/Loopback — audio comes off the system audio engine
+# via ScreenCaptureKit (bin/screen-audio-record).
 #
 # Usage:
-#   rec                      # whole screen + all system audio → ./<timestamp>.mov
+#   rec                      # whole screen + all system audio → ./<timestamp>.mov (cwd)
 #   rec --app Renoise        # screen + ONLY that app's audio
-#   rec --mic                # + your microphone (2nd track) AND a YouTube-ready -flat.mov
-#   rec --reveal             # reveal the finished file in Finder
+#   rec --also-mic           # + your microphone as a 2nd track
 #   rec --out ~/foo.mov      # custom path
 #   rec --list               # displays + audible app names
 #
-# With --mic, --auto-flatten also writes <name>-flat.mov (system + mic mixed into ONE
-# track) because YouTube/QuickTime play only the FIRST audio track — a 2-track file would
-# lose your voice on upload. --auto-flatten is a no-op unless the mic is used.
-# Toggle the mic on/off mid-recording: kill -USR1 $(pgrep -n screen-audio-record)
-#
-# Any flag passes through to screen-audio-record; --app overrides --system-audio.
-# Builds the binaries on first run (or when a source is newer).
+# Any flag is passed straight through to screen-audio-record; --app overrides
+# --system-audio (single-app audio wins).
 
-set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN="$DIR/screen-audio-record"
-SRC="$DIR/screen-audio-record.swift"
-RECAUDIO="$DIR/rec-audio"
-RECAUDIO_SRC="$DIR/rec-audio.swift"
-RECSUB="$DIR/rec-subtitle"
-RECSUB_SRC="$DIR/rec-subtitle.swift"
-
-if [ ! -x "$BIN" ] || [ "$SRC" -nt "$BIN" ] \
-   || [ ! -x "$RECAUDIO" ] || [ "$RECAUDIO_SRC" -nt "$RECAUDIO" ] \
-   || [ ! -x "$RECSUB" ] || [ "$RECSUB_SRC" -nt "$RECSUB" ]; then
-  "$DIR/build.sh" >&2
-fi
-
-# --auto-flatten is a no-op unless --mic; with the mic it also emits a YouTube-ready -flat.mov.
-exec "$BIN" --system-audio --auto-flatten "$@"
+# --auto-flatten is a no-op unless the mic is used; with --mic it also writes a
+# YouTube-ready <name>-flat.mov (system + mic mixed into one track).
+exec "$DIR/screen-audio-record" --system-audio --auto-flatten "$@"
