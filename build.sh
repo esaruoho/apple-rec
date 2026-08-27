@@ -38,6 +38,11 @@ chmod +x rec recburn recburnclick recburn-redact recburn-url recburn-youtube
 echo "▸ checking the vocabulary rules…"
 "$BIN/rec-subtitle" --self-test
 
+# The voice/app balance decision and every filter in the mic chain are pure arithmetic too,
+# so they are asserted here rather than discovered three minutes into a screencast.
+echo "▸ checking the audio balance rules…"
+"$BIN/rec-audio" --self-test
+
 if [ "${1:-}" = "--cli" ]; then
   echo "✓ CLI ready: ./rec , ./recburn , ./recburnclick"
   exit 0
