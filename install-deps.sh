@@ -1,31 +1,48 @@
 #!/bin/bash
-# install-deps.sh — install the ONE 3rd-party dependency rec needs, and only for subtitles.
-#
-# Recording, webcam picture-in-picture, audio split/flatten, and subtitle BURN-IN are all
-# Apple-native (ScreenCaptureKit / AVFoundation / Core Animation) — zero dependencies.
-# The only thing that needs a 3rd-party tool is TRANSCRIPTION (turning speech into text):
-# rec-subtitle shells out to the openai-whisper `whisper` CLI. This installs it.
-set -e
+# REPORT-CARD >> features/recburn-whisper-deps.feature
+# Install/check the Python dependencies used by the actual whisper executable.
+set -euo pipefail
+MODE="${1:-install}"
+PIP_FLAGS=()
+case "$MODE" in
+  --check) ;;
+  install) ;;
+  --break-system-packages) PIP_FLAGS+=(--break-system-packages) ;;
+  *) echo "Usage: $0 [--check|--break-system-packages]" >&2; exit 2 ;;
+esac
 
-echo "==> Installing openai-whisper (Whisper transcription)…"
-if command -v pip3 >/dev/null 2>&1; then
-  pip3 install -U openai-whisper
-elif command -v pip >/dev/null 2>&1; then
-  pip install -U openai-whisper
-else
-  echo "No pip found. Install Python 3 first (python.org, or 'brew install python')." >&2
-  exit 1
+resolve_python() {
+  PYTHON="${RECBURN_PYTHON:-}"
+  if [ -z "$PYTHON" ] && command -v whisper >/dev/null 2>&1; then
+    local header
+    IFS= read -r header < "$(command -v whisper)" || true
+    header="${header#\#!}"
+    # pip-generated console scripts have an absolute interpreter shebang.
+    if [[ "$header" = /* && "$header" != *" "* && -x "$header" ]]; then
+      PYTHON="$header"
+    fi
+  fi
+  PYTHON="${PYTHON:-python3}"
+  command -v "$PYTHON" >/dev/null 2>&1 || { echo "Python 3 not found." >&2; exit 1; }
+}
+
+check_whisper() {
+  command -v ffmpeg >/dev/null 2>&1 || { echo "ffmpeg missing: brew install ffmpeg" >&2; exit 1; }
+  command -v whisper >/dev/null 2>&1 || { echo "whisper missing: run this installer without --check." >&2; exit 1; }
+  whisper --help >/dev/null
+  "$PYTHON" - <<'PY'
+import whisper  # Match the CLI import order (torch before Numba).
+import numpy, numba, llvmlite
+f = numba.njit(lambda x: x.sum())
+assert f(numpy.array([1., 2., 3.])) == 6.
+print(f"✓ Whisper import + JIT: NumPy {numpy.__version__}, Numba {numba.__version__}, llvmlite {llvmlite.__version__}")
+PY
+  echo "✓ whisper CLI and ffmpeg ready."
+}
+
+resolve_python
+if [ "$MODE" != --check ]; then
+  echo "==> Installing compatible Whisper dependencies with $PYTHON…"
+  "$PYTHON" -m pip install --upgrade openai-whisper 'numba>=0.67,<0.68' 'numpy<2.6' "${PIP_FLAGS[@]}"
 fi
-
-echo "==> Checking ffmpeg (Whisper decodes audio with it)…"
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "   ffmpeg not found — install it with:  brew install ffmpeg"
-else
-  echo "   ffmpeg ok."
-fi
-
-echo
-echo "Done. Now subtitles work:"
-echo "  rec-subtitle <video>          # → <video>.srt"
-echo "  rec-subtitle <video> --burn   # → <video>-subtitled.mov"
-echo "  rec --mic --pip --burn        # whole pipeline in one command"
+check_whisper

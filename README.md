@@ -77,7 +77,7 @@ in the same folder so the recorder can find its helpers.
   (Sequoia). No Homebrew, no dependencies for recording — Apple frameworks only.
 - **Xcode command-line tools** for `swiftc` (`xcode-select --install`).
 - **Subtitles only** (`rec-subtitle`) need the third-party [openai-whisper](https://github.com/openai/whisper)
-  CLI + `ffmpeg`: run **`./install-deps.sh`** once (`pip install openai-whisper`). Everything
+  CLI + `ffmpeg`: run **`./install-deps.sh`** once (installs a compatible Whisper / Numba / NumPy set). Everything
   else — recording, per-app audio, flatten, webcam PiP, subtitle burn-in — is Apple-native.
 
 ### First-run permission
@@ -213,9 +213,9 @@ rec-subtitle recording.mov --burn     # → recording-subtitled.mov (subtitles p
 - **`--burn`:** hard-paints the subtitles into a new `-subtitled.mov` — Apple-native
   `AVVideoCompositionCoreAnimationTool`, white text + black outline, bottom-center, timed per cue.
 - **Transcription** is the one feature that needs a 3rd-party tool (the openai-whisper
-  `whisper` CLI). Install it once: **`./install-deps.sh`** (runs `pip install openai-whisper`
-  + checks ffmpeg). `--model tiny|base|small|medium|large-v3` trades speed for accuracy
-  (default `base`). Everything else — recording, PiP, flatten, burn-in — is Apple-native, no deps.
+  `whisper` CLI). Install it once: **`./install-deps.sh`** (installs compatible Whisper / Numba / NumPy versions
+  + verifies Whisper CLI startup, Numba compilation, and ffmpeg). `--model tiny|base|small|medium|large-v3` trades speed for accuracy
+  (default `small.en` for English, `small` otherwise). Everything else — recording, PiP, flatten, burn-in — is Apple-native, no deps.
 
 ### Your own words — the vocabulary
 
@@ -303,3 +303,21 @@ MIT — see [LICENSE](LICENSE).
 Mirror of `bin/screen-audio-record` + `bin/rec` from
 [esaruoho/apple](https://github.com/esaruoho/apple). The standalone repo is canonical on
 divergence.
+
+### Checking and repairing subtitle dependencies
+
+Before recording, run `./install-deps.sh --check`. It checks the actual `whisper`
+executable, its Python interpreter, Numba JIT compilation, and ffmpeg without installing
+packages. A failed check exits nonzero rather than claiming subtitles are ready.
+
+For installation/repair run `./install-deps.sh`. On Homebrew-managed Python, explicitly
+opt in with `./install-deps.sh --break-system-packages`, or use a virtual environment.
+The installer targets the existing Whisper executable's absolute Python shebang;
+`RECBURN_PYTHON` can explicitly select an interpreter.
+
+The tested dependency family is `numba>=0.67,<0.68` and `numpy<2.6`. On 2026-10-02,
+Numba 0.63.1 rejected NumPy 2.5.3 and stopped transcription before generating subtitles.
+Updating Numba to 0.67.0 and llvmlite to 0.49.0 repaired real transcription without
+downgrading NumPy. Recording and flattening were unaffected by that import error.
+See [repair evidence](docs/recburn-numpy-repair.md) and
+[report card](features/recburn-whisper-deps.feature).
