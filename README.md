@@ -19,6 +19,7 @@ type `q` + Enter) to stop and finalize.
 | | what it adds |
 |---|---|
 | **`rec`** | screen + all system audio → `.mov`. The base. |
+| **`recaudio`** | `rec` **without the picture** → `.m4a`. The sound of a call, not the screen of it. |
 | **`recburn`** | `rec` + microphone + webcam circle + subtitles burned in on stop |
 | **`recburnclick`** | `recburn` + a live **`CLICKS: n`** counter burned into the video |
 | **`recburn-redact`** | cover something out of a finished recording, re-encoding only the affected span |
@@ -68,8 +69,8 @@ tracked `.swift` sources:
 | `rec-audio` | `rec-audio.swift` | split / flatten audio tracks |
 | `rec-subtitle` | `rec-subtitle.swift` | Whisper `.srt` + burn-in |
 
-`rec` is a small shell wrapper (checked in) that calls `screen-audio-record`. All four live
-in the same folder so the recorder can find its helpers.
+`rec` and `recaudio` are small shell wrappers (checked in) that call `screen-audio-record`.
+All live in the same folder so the recorder can find its helpers.
 
 ### Requirements
 
@@ -93,6 +94,7 @@ suppress.
 rec                      # whole screen + ALL system audio → ./<timestamp>.mov
 rec --app Renoise        # screen + ONLY that app's audio (nothing else leaks in)
 rec --mic                # start with your microphone recording too (2nd audio track)
+rec --audio-only         # NO picture at all → ./<timestamp>.m4a (see `recaudio` below)
 rec --reveal             # reveal + select the finished file in Finder on stop
 rec --out ~/demo.mov     # custom output path
 rec --list               # list displays + audible running apps (for --app)
@@ -186,6 +188,38 @@ them independently.
 and your **voice (track 2) is silently dropped**. So `rec --mic` **also writes a
 `<name>-flat.mov`** with system + mic **mixed into one track** — that's the file you upload.
 (iMovie can't split embedded tracks either; see `rec-audio` below.)
+
+### `recaudio` — the sound of a call, not the screen of it
+
+Sometimes you want the **audio** and nothing else: a meeting you only need to *listen*
+to, a podcast to transcribe, a voice note to keep. Capturing the screen for that is
+wasteful — it burns CPU on frames nobody will watch and produces a file ten times
+larger than the sound.
+
+```bash
+recaudio                            # all system audio, no picture → ./<timestamp>.m4a
+recaudio --app Discord              # ONE app's audio (a call), still no picture
+recaudio --app Discord --also-mic   # + your microphone, as its own track
+recaudio --out ~/call.m4a           # custom path
+```
+
+The output is a **`.m4a`** with the **same two tracks** the video path produces — the
+app/system audio and the microphone — so everything downstream still works:
+
+```bash
+recaudio --app Discord --also-mic   # → call.m4a (2 tracks) + call-flat.m4a (mixed, YouTube-ready)
+rec-audio flatten call.m4a          # → call-flat.m4a (one mixed track, no picture)
+rec-subtitle call.m4a               # → call.srt (a sidecar — there is no picture to burn into)
+```
+
+How it saves the work: the recorder simply **never attaches the `.screen` stream
+output**, and asks ScreenCaptureKit for a 2×2 video configuration it never encodes.
+Nothing is captured, nothing is written, nothing is compressed — the audio path is
+byte-for-byte the same one `rec` already uses. It is the same tool with the picture
+turned off, not a second recorder.
+
+`rec --audio-only` is the same thing (the flag is passed straight through), so if you
+already know `rec`, you already know `recaudio`.
 
 ### `rec-audio` — post-process for editing
 

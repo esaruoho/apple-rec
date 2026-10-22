@@ -400,7 +400,11 @@ func which(_ name: String) -> String? {
 /// running this from ~/Downloads or anywhere reuses the same cached model. Returns the
 /// <inputstem>.srt path in outStem's directory.
 func transcribe(_ audioOrVideo: String, model: String?, lang: String, outStem: String, prompt: String? = nil) -> String {
-    let outDir = (outStem as NSString).deletingLastPathComponent
+    // The output directory is the input file's directory — but for a bare filename
+    // ("take.m4a", no directory part) that is the CURRENT directory, not "". Whisper
+    // calls makedirs(output_dir) and an empty string makes it die.
+    var outDir = (outStem as NSString).deletingLastPathComponent
+    if outDir.isEmpty { outDir = FileManager.default.currentDirectoryPath }
     let inStem = ((audioOrVideo as NSString).lastPathComponent as NSString).deletingPathExtension
     guard let w = which("whisper") else {
         die("`whisper` not found — `pip install openai-whisper` (or run install-deps.sh) to enable subtitles")
@@ -707,7 +711,10 @@ if !vocab.isEmpty { note("⧉ vocabulary: \(vocab.source) — \(vocab.terms.coun
 let prompt = opt("--prompt") ?? vocabularyPrompt(vocab)   // → whisper --initial_prompt
 let lang = opt("--lang") ?? "en"   // default English; pass --lang auto to auto-detect
 let micAudio = opt("--mic")
-let stem = (videoPath as NSString).deletingPathExtension
+// The output stem, WITHOUT the extension. URL's form is used because it yields an
+// ABSOLUTE path, so the stem and the transcript it names are spelled the same way
+// however the input was given (bare name, "./x", or a full path). That matters below.
+let stem = URL(fileURLWithPath: videoPath).deletingPathExtension().path
 
 // Get the .srt: use --srt if given, else an existing sidecar, else transcribe.
 var srt = opt("--srt") ?? (stem + ".srt")
@@ -718,10 +725,17 @@ if !FileManager.default.fileExists(atPath: srt) {
     } else {
         let produced = transcribe(source, model: model, lang: lang, outStem: stem + ".srt", prompt: prompt)
         // whisp/whisper name by the SOURCE stem; normalize to <video-stem>.srt for predictability.
-        if produced != stem + ".srt" { try? FileManager.default.removeItem(atPath: stem + ".srt"); try? FileManager.default.copyItem(atPath: produced, toPath: stem + ".srt") }
-        srt = stem + ".srt"
-    }
-}
+        // Compare STANDARDIZED paths, not raw strings: one file reached by a relative
+        // and an absolute route is ONE file, and treating it as two would delete the
+        // transcript we had just written and then copy it onto itself.
+        let want = URL(fileURLWithPath: stem).appendingPathExtension("srt").standardizedFileURL
+        let have = URL(fileURLWithPath: produced).standardizedFileURL
+        if have != want {
+            try? FileManager.default.removeItem(at: want)
+            try? FileManager.default.copyItem(at: have, to: want)
+        }
+        srt = want.path
+    }}
 
 // The repair half of the vocabulary: Whisper's bias is a nudge, not a guarantee, so the
 // finished transcript is swept before anything is burned into the picture. Idempotent — a
@@ -731,5 +745,13 @@ if !noVocab { correctSRT(srt, vocab) }
 print("✓ \(srt)")
 
 if doBurn {
-    burn(video: videoPath, srtPath: srt, outPath: stem + "-subtitled.mov")
+    // Burning subtitles INTO a picture needs a picture. An audio-only recording has
+    // none — so the .srt is the deliverable there, and we say so rather than
+    // failing with a bare "no video track".
+    let hasVideo = !sync({ try await AVURLAsset(url: URL(fileURLWithPath: videoPath)).loadTracks(withMediaType: .video) }).isEmpty
+    if hasVideo {
+        burn(video: videoPath, srtPath: srt, outPath: stem + "-subtitled.mov")
+    } else {
+        note("audio-only input — kept the .srt sidecar (nothing to burn subtitles into)")
+    }
 }

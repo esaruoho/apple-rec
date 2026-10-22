@@ -31,12 +31,15 @@ swiftc -O -target ${ARCH}-apple-macos13.0 -o "$BIN/rec-subtitle" rec-subtitle.sw
 # checkout for a helper.
 swiftc -O -target ${ARCH}-apple-macos13.0 -o "$BIN/vision-ocr" vision-ocr.swift \
   -framework Vision -framework AppKit -framework CoreImage
-chmod +x rec recburn recburnclick recburn-redact recburn-url recburn-youtube
+chmod +x rec recaudio recburn recburnclick recburn-redact recburn-url recburn-youtube
 
 # The proper-noun vocabulary is pure logic, so it is checked headlessly HERE rather than by
 # discovering mid-screencast that "Paketti" came out as "Pucketty" again.
 echo "▸ checking the vocabulary rules…"
 "$BIN/rec-subtitle" --self-test
+
+echo "▸ checking the reconnect rules…"
+"$BIN/screen-audio-record" --self-test
 
 # The voice/app balance decision and every filter in the mic chain are pure arithmetic too,
 # so they are asserted here rather than discovered three minutes into a screencast.
@@ -44,7 +47,7 @@ echo "▸ checking the audio balance rules…"
 "$BIN/rec-audio" --self-test
 
 if [ "${1:-}" = "--cli" ]; then
-  echo "✓ CLI ready: ./rec , ./recburn , ./recburnclick"
+  echo "✓ CLI ready: ./rec , ./recaudio , ./recburn , ./recburnclick"
   exit 0
 fi
 
@@ -112,7 +115,7 @@ PLIST
 echo "▸ signing (ad-hoc, stable identifier)…"
 codesign --force --deep --sign - --identifier com.esaruoho.recburn "$APP" >/dev/null
 echo "✓ built: $APP"
-echo "✓ CLI:   ./rec , ./recburn , ./recburnclick  (engine binaries alongside)"
+echo "✓ CLI:   ./rec , ./recaudio , ./recburn , ./recburnclick  (engine binaries alongside)"
 
 if [ "${1:-}" = "--install" ]; then
   echo "▸ installing…"
@@ -126,7 +129,7 @@ if [ "${1:-}" = "--install" ]; then
   done
   echo "✓ installed /Applications/RecBurn.app"
   if [ -n "$LINKDIR" ]; then
-    for e in "${ENGINE[@]}" rec recburn recburnclick recburn-url recburn-youtube recburn-vocabulary.json; do ln -sf "$ROOT/$e" "$LINKDIR/$e"; done
+    for e in "${ENGINE[@]}" rec recaudio recburn recburnclick recburn-url recburn-youtube recburn-vocabulary.json; do ln -sf "$ROOT/$e" "$LINKDIR/$e"; done
     echo "✓ linked rec/recburn into $LINKDIR  (make sure it's on your PATH)"
   else
     echo "• CLI ready here — add it to PATH:  export PATH=\"$ROOT:\$PATH\""
