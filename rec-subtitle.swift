@@ -745,5 +745,13 @@ if !noVocab { correctSRT(srt, vocab) }
 print("✓ \(srt)")
 
 if doBurn {
-    burn(video: videoPath, srtPath: srt, outPath: stem + "-subtitled.mov")
+    // Burning subtitles INTO a picture needs a picture. An audio-only recording has
+    // none — so the .srt is the deliverable there, and we say so rather than
+    // failing with a bare "no video track".
+    let hasVideo = !sync({ try await AVURLAsset(url: URL(fileURLWithPath: videoPath)).loadTracks(withMediaType: .video) }).isEmpty
+    if hasVideo {
+        burn(video: videoPath, srtPath: srt, outPath: stem + "-subtitled.mov")
+    } else {
+        note("audio-only input — kept the .srt sidecar (nothing to burn subtitles into)")
+    }
 }
