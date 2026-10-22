@@ -6,7 +6,30 @@ Each card is a triad: the `.feature` spec, a `.session.md` (the conversation tha
 
 ## Contents
 
+- [Record the audio of a call without recording the screen](#audio-only-recording) — `audio-only-recording.feature`
 - [Install and verify compatible Whisper dependencies](#recburn-whisper-deps) — `recburn-whisper-deps.feature`
+
+
+<a id="audio-only-recording"></a>
+## Record the audio of a call without recording the screen
+
+`features/audio-only-recording.feature` · [session](audio-only-recording.session.md)
+
+**What it does:** As a person in a meeting, I want the sound of the call and not its picture, So that a long call costs no CPU on frames nobody will watch.
+
+**Behaviour (7 scenarios):**
+
+- An audio-only recording has two audio tracks and no video track — `@runtime-verified`
+- The YouTube-ready mix is written next to the audio-only recording — `@runtime-verified`
+- Flattening an audio-only recording produces a single mixed .m4a — `@runtime-verified`
+- Subtitles of an audio-only recording are kept as a sidecar — `@runtime-verified`
+- A file with no directory part transcribes instead of crashing — `@runtime-verified`
+- The reconnect size guard is asserted at build time — `@build-verified`
+- The screen and system-audio path is unchanged — `@stock`
+
+**How it does it:** **Key procs:** `audioOnly`, `reconnectSizeIsCompatible`, `defaultOutPath`, `transcribe`, `flatten` · **Source files:** `screen-audio-record.swift`, `rec-audio.swift`, `rec-subtitle.swift`
+
+**Grade:** @build-verified ×1 · @runtime-verified ×5 · @stock ×1
 
 
 <a id="recburn-whisper-deps"></a>

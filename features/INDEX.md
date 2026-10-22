@@ -11,4 +11,5 @@ Derived views — GENERATED, never hand-edit:
 
 | Card | What it covers | Session | Shipped in |
 |------|----------------|---------|------------|
-| _(first card goes here)_ | | | |
+| `recburn-whisper-deps` | Install and verify compatible Whisper dependencies | [session](recburn-whisper-deps.session.md) | `8028689` |
+| `audio-only-recording` | Record the audio of a call without recording the screen | [session](audio-only-recording.session.md) | PR #1 |
