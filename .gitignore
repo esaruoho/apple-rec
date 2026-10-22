@@ -4,6 +4,7 @@
 /screen-audio-record
 /rec-audio
 /rec-subtitle
+/vision-ocr
 
 # app build artifacts — RecBurn.app is assembled by ./build.sh, not committed
 /RecBurn.app/
