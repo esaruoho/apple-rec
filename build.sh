@@ -38,6 +38,9 @@ chmod +x rec recaudio recburn recburnclick recburn-redact recburn-url recburn-yo
 echo "▸ checking the vocabulary rules…"
 "$BIN/rec-subtitle" --self-test
 
+echo "▸ checking the reconnect rules…"
+"$BIN/screen-audio-record" --self-test
+
 # The voice/app balance decision and every filter in the mic chain are pure arithmetic too,
 # so they are asserted here rather than discovered three minutes into a screencast.
 echo "▸ checking the audio balance rules…"

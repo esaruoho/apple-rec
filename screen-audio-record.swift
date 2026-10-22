@@ -160,6 +160,7 @@ func parseArgs() -> Options {
         case "--burn-vocab":   o.burnVocab = it.next()          // vocabulary file (proper nouns)
         case "--no-vocab":     o.burnNoVocab = true             // no bias, no correction sweep
         case "--list", "-l":   o.list = true
+        case "--self-test":    selfTest()   // Never returns.
         case "--help", "-h":   printUsage(); exit(0)
         default: FileHandle.standardError.write("unknown arg: \(a)\n".data(using: .utf8)!); exit(2)
         }
@@ -882,19 +883,14 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
                     return
                 }
                 let display = content.displays[self.opts.displayIndex]
-                // In audio-only mode the writer is deliberately 2x2 (there is no video
-                // track at all), so comparing the display's real pixel size against it
-                // is meaningless — it ALWAYS mismatches, which turned every
-                // ScreenCaptureKit blip into a hard stop that cut the take short. There
-                // is no committed video size to protect, so skip the check entirely.
-                if !self.opts.audioOnly {
-                    let (pw, ph) = self.pixelSize(of: display)
-                    guard pw == self.writerWidth, ph == self.writerHeight else {
-                        self.giveUp("the display resolution changed mid-recording "
-                                    + "(\(self.writerWidth)x\(self.writerHeight) → \(pw)x\(ph)) — "
-                                    + "the file already committed to the old size")
-                        return
-                    }
+                let (pw, ph) = self.pixelSize(of: display)
+                guard reconnectSizeIsCompatible(audioOnly: self.opts.audioOnly,
+                                                writerW: self.writerWidth, writerH: self.writerHeight,
+                                                displayW: pw, displayH: ph) else {
+                    self.giveUp("the display resolution changed mid-recording "
+                                + "(\(self.writerWidth)x\(self.writerHeight) → \(pw)x\(ph)) — "
+                                + "the file already committed to the old size")
+                    return
                 }
                 guard let filter = self.makeFilter(display, content) else {
                     self.giveUp("\"\(self.opts.appName ?? "")\" is no longer running")
@@ -1338,6 +1334,66 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
             }
         }
     }
+}
+
+// MARK: - Reconnect size guard
+//
+// A reconnect must not append frames of a different size to a writer that is already
+// committed to a size — so a genuine mid-recording resolution change has to stop the take.
+//
+// But in AUDIO-ONLY mode the writer is deliberately 2x2: there is no video track at all.
+// Comparing the display's real pixel size against 2x2 ALWAYS mismatches, so this guard
+// used to fire on every single ScreenCaptureKit blip and cut the recording short with a
+// misleading "the display resolution changed" message — the exact opposite of the
+// reconnect the guard was sitting in the middle of.
+//
+// Kept as a pure function so the rule can be asserted by --self-test instead of being
+// discovered in the field as a lost take.
+func reconnectSizeIsCompatible(audioOnly: Bool,
+                               writerW: Int, writerH: Int,
+                               displayW: Int, displayH: Int) -> Bool {
+    // Audio-only writes no video, so there is no committed size to protect.
+    if audioOnly { return true }
+    return writerW == displayW && writerH == displayH
+}
+
+// MARK: - self-test
+//
+// The reconnect rules are pure arithmetic, so they are asserted here at build time rather
+// than discovered when a take gets cut short. Every case below is a bug that was possible.
+
+func selfTest() -> Never {
+    var failures = 0
+    func check(_ name: String, _ ok: Bool, _ detail: @autoclosure () -> String = "") {
+        if ok { print("  ✓ \(name)") }
+        else { failures += 1; print("  ✗ \(name)  \(detail())") }
+    }
+
+    print("reconnect size guard")
+    // The bug that cut a real take short: audio-only (writer 2x2) vs a real display.
+    check("audio-only ignores the display size (2x2 writer vs 3024x1964 display)",
+          reconnectSizeIsCompatible(audioOnly: true, writerW: 2, writerH: 2,
+                                    displayW: 3024, displayH: 1964))
+    check("audio-only survives any display size",
+          reconnectSizeIsCompatible(audioOnly: true, writerW: 2, writerH: 2,
+                                    displayW: 1920, displayH: 1080))
+    // Video mode still protects a committed writer size — the guard's original purpose.
+    check("video: same size is compatible",
+          reconnectSizeIsCompatible(audioOnly: false, writerW: 3024, writerH: 1964,
+                                    displayW: 3024, displayH: 1964))
+    check("video: a real resolution change is rejected",
+          !reconnectSizeIsCompatible(audioOnly: false, writerW: 3024, writerH: 1964,
+                                     displayW: 1512, displayH: 982))
+    check("video: a changed aspect ratio is rejected",
+          !reconnectSizeIsCompatible(audioOnly: false, writerW: 3024, writerH: 1964,
+                                     displayW: 3024, displayH: 1600))
+
+    if failures == 0 {
+        print("all checks passed")
+        exit(0)
+    }
+    print("\(failures) check(s) FAILED")
+    exit(1)
 }
 
 // MARK: - main
