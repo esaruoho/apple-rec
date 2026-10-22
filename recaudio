@@ -1,0 +1,19 @@
+#!/bin/bash
+# recaudio — record the AUDIO of a call, not the screen: app/system audio + your mic,
+# nothing else. No picture is captured, so it costs a fraction of the CPU and disk.
+#
+# This is the "I want the sound of that meeting, not a video of my desktop" tool.
+# The output is a .m4a with two tracks: the app's audio, and your microphone.
+#
+# Ctrl-C stops. On stop it also writes a YouTube-ready flat copy (both tracks mixed
+# into one, ducked under your voice) — the file you would actually send.
+#
+# Usage:
+#   recaudio --app Discord            # the audio of Discord, + your mic
+#   recaudio --app Discord --no-mic   # participants only, no mic
+#   recaudio --list                   # displays + audible app names
+#   recaudio --out ~/call.m4a         # custom path
+#
+# Any flag is passed straight through to screen-audio-record.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$DIR/screen-audio-record" --system-audio --audio-only --auto-flatten "$@"

@@ -662,10 +662,14 @@ func flatten(_ inPath: String, _ outArg: String?, normalize: Bool = true, rebala
     let asset = AVURLAsset(url: URL(fileURLWithPath: inPath))
     let videoTracks = sync { try await asset.loadTracks(withMediaType: .video) }
     let audioTracks = sync { try await asset.loadTracks(withMediaType: .audio) }
-    guard let vTrack = videoTracks.first else { die("no video track in \(inPath)") }
+    // An audio-only recording has no video track to carry through — that is the whole
+    // point of it. Everything else about the mix is identical, so the only difference
+    // is that the video half of the copy is skipped.
+    let vTrack = videoTracks.first
     guard !audioTracks.isEmpty else { die("no audio tracks in \(inPath)") }
 
-    let outPath = outArg ?? "\((inPath as NSString).deletingPathExtension)-flat.mov"
+    let outPath = outArg ?? "\((inPath as NSString).deletingPathExtension)-flat"
+        + (vTrack == nil ? ".m4a" : ".mov")
     let out = URL(fileURLWithPath: outPath)
     try? FileManager.default.removeItem(at: out)
 
@@ -733,18 +737,29 @@ func flatten(_ inPath: String, _ outArg: String?, normalize: Bool = true, rebala
         reader.add(audioOut)
     }
 
-    let videoOut = AVAssetReaderTrackOutput(track: vTrack, outputSettings: nil)  // nil = passthrough (no re-decode)
-    videoOut.alwaysCopiesSampleData = false
-    guard reader.canAdd(videoOut) else { die("cannot add video output") }
-    reader.add(videoOut)
+    // The video half is a straight copy when there IS a picture, and simply absent
+    // when there is not (an audio-only recording). Either way the audio mix below
+    // is the same.
+    var videoOut: AVAssetReaderTrackOutput?
+    var vIn: AVAssetWriterInput?
+    if let vTrack {
+        let o = AVAssetReaderTrackOutput(track: vTrack, outputSettings: nil)  // nil = passthrough (no re-decode)
+        o.alwaysCopiesSampleData = false
+        guard reader.canAdd(o) else { die("cannot add video output") }
+        reader.add(o)
+        videoOut = o
+    }
 
-    guard let writer = try? AVAssetWriter(outputURL: out, fileType: .mov) else { die("writer") }
-    let vFmt = sync { try await vTrack.load(.formatDescriptions) }.first
-    let vIn = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: vFmt)  // passthrough
-    vIn.expectsMediaDataInRealTime = false
-    vIn.transform = sync { try await vTrack.load(.preferredTransform) }
-    guard writer.canAdd(vIn) else { die("cannot add video input") }
-    writer.add(vIn)
+    guard let writer = try? AVAssetWriter(outputURL: out, fileType: vTrack == nil ? .m4a : .mov) else { die("writer") }
+    if let vTrack {
+        let vFmt = sync { try await vTrack.load(.formatDescriptions) }.first
+        let i = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: vFmt)  // passthrough
+        i.expectsMediaDataInRealTime = false
+        i.transform = sync { try await vTrack.load(.preferredTransform) }
+        guard writer.canAdd(i) else { die("cannot add video input") }
+        writer.add(i)
+        vIn = i
+    }
 
     let aSettings: [String: Any] = [
         AVFormatIDKey: kAudioFormatMPEG4AAC,
@@ -762,11 +777,13 @@ func flatten(_ inPath: String, _ outArg: String?, normalize: Bool = true, rebala
     writer.startSession(atSourceTime: .zero)
 
     let group = DispatchGroup()
-    group.enter()
-    vIn.requestMediaDataWhenReady(on: DispatchQueue(label: "flatten.v")) {
-        while vIn.isReadyForMoreMediaData {
-            if let sb = videoOut.copyNextSampleBuffer() { vIn.append(sb) }
-            else { vIn.markAsFinished(); group.leave(); break }
+    if let videoOut, let vIn {
+        group.enter()
+        vIn.requestMediaDataWhenReady(on: DispatchQueue(label: "flatten.v")) {
+            while vIn.isReadyForMoreMediaData {
+                if let sb = videoOut.copyNextSampleBuffer() { vIn.append(sb) }
+                else { vIn.markAsFinished(); group.leave(); break }
+            }
         }
     }
     group.enter()

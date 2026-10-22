@@ -29,6 +29,7 @@ struct Options {
     var displayIndex = 0
     var systemAudio = false
     var alsoMic = false
+    var audioOnly = false      // no picture at all: audio tracks only, .m4a container
     var fps = 60
     var outPath = ""
     var list = false
@@ -131,6 +132,7 @@ func parseArgs() -> Options {
         case "--clicks-label":  o.clicksLabel = it.next() ?? "CLICKS"
         case "--clicks-seed":   o.clicksSeed = Int(it.next() ?? "0") ?? 0
         case "--also-mic", "--mic": o.alsoMic = true
+        case "--audio-only", "--no-video": o.audioOnly = true
         // Negations exist so a CHAINED wrapper can be subtracted from: recburnclick →
         // recburn adds --mic --pip --burn, and a trailing --no-pip must be able to undo
         // one of them without the user rebuilding the whole command from rec.
@@ -198,6 +200,10 @@ func printUsage() {
       --clicks-corner <c>    tl (default) | tr | bl | br
       --clicks-label <s>     label before the number (default "CLICKS")
       --also-mic, --mic      start with your microphone recording (2nd audio track)
+      --audio-only           record AUDIO ONLY — no picture at all. Writes a .m4a with the
+                             same two tracks (app/system audio + mic). Cheaper on CPU, and
+                             the right shape for a call you want the sound of, not the
+                             screen of. Implies --also-mic-friendly: use it with --mic.
       --fps <n>              frame rate (default 60)
       --out, -o <path>       output .mov (default: ./yyyy-MM-dd-HH-mm-ss.mov in the current folder)
       --reveal               after finalizing, reveal the file in Finder (open -R)
@@ -253,16 +259,18 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
 
     /// Default output: <current working directory>/yyyy-MM-dd-HH-mm-ss.mov —
     /// the file lands in whatever folder you ran the command from.
-    static func defaultOutPath() -> String {
+    /// Audio-only mode writes .m4a instead: the container matches the content.
+    static func defaultOutPath(audioOnly: Bool = false) -> String {
         let dir = FileManager.default.currentDirectoryPath
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd-HH-mm-ss"
-        return (dir as NSString).appendingPathComponent(f.string(from: Date()) + ".mov")
+        let ext = audioOnly ? "m4a" : "mov"
+        return (dir as NSString).appendingPathComponent(f.string(from: Date()) + "." + ext)
     }
     var stream: SCStream?
     var cfg: SCStreamConfiguration!   // kept mutable so SIGUSR1 can flip captureMicrophone live
     var writer: AVAssetWriter!
-    var videoInput: AVAssetWriterInput!
+    var videoInput: AVAssetWriterInput?   // nil in --audio-only mode (there is no picture)
     var sysAudioInput: AVAssetWriterInput!
     var micInput: AVAssetWriterInput?
     var micOn = false                 // whether mic samples are currently being written
@@ -313,7 +321,9 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
         let camRate = Double(cam) / window
 
         // Below 80% of the requested frame rate, or a PIP webcam feeding under 10fps, is trouble.
-        let starved = target > 0 && Double(written) < target * 0.80
+        // In --audio-only there is no picture, so no frames are written BY DESIGN and
+        // "0 fps" is not a problem to report — the frame budget does not apply.
+        let starved = !opts.audioOnly && target > 0 && Double(written) < target * 0.80
         let camStarved = opts.pip && cam > 0 && camRate < 10
         guard starved || camStarved, Date().timeIntervalSince(lastWarnAt) > 6 else { return }
         lastWarnAt = Date()
@@ -406,7 +416,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
     }
 
     func start(_ content: SCShareableContent) {
-        if opts.outPath.isEmpty { opts.outPath = Recorder.defaultOutPath() }
+        if opts.outPath.isEmpty { opts.outPath = Recorder.defaultOutPath(audioOnly: opts.audioOnly) }
         guard opts.displayIndex < content.displays.count else { err("no display at index \(opts.displayIndex)") }
         let display = content.displays[opts.displayIndex]
 
@@ -422,10 +432,21 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
         let (pw, ph) = pixelSize(of: display)
 
         let cfg = SCStreamConfiguration()
-        cfg.width = pw
-        cfg.height = ph
-        cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(opts.fps))
-        cfg.showsCursor = true
+        if opts.audioOnly {
+            // Audio-only: SCStream still wants a video configuration, so ask for the
+            // smallest possible frame at the slowest possible rate, and never attach a
+            // .screen output below. Nothing is encoded, nothing is written — the video
+            // path is inert and costs no CPU.
+            cfg.width = 2
+            cfg.height = 2
+            cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+            cfg.showsCursor = false
+        } else {
+            cfg.width = pw
+            cfg.height = ph
+            cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(opts.fps))
+            cfg.showsCursor = true
+        }
         cfg.queueDepth = 6
         cfg.capturesAudio = true
         cfg.sampleRate = 48_000
@@ -449,7 +470,12 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
 
         let s = SCStream(filter: filter, configuration: cfg, delegate: self)
         do {
-            try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
+            // In audio-only mode no .screen output is attached at all — that is where
+            // the CPU saving comes from. The .audio output still delivers the app's
+            // sound, because the filter is what scopes the tap, not the output type.
+            if !opts.audioOnly {
+                try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
+            }
             try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: sampleQueue)
             try s.addStreamOutput(self, type: .microphone, sampleHandlerQueue: sampleQueue)
         } catch { err("addStreamOutput: \(error.localizedDescription)") }
@@ -464,8 +490,13 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
             let micLine = self.micOn
                 ? "🎤 microphone: ON — your voice IS being recorded (own track)"
                 : "🎤 microphone: off — system audio only (kill -USR1 \(pid) to turn on)"
+            // In audio-only mode the scope wording would be misleading: there is no
+            // display and no window being captured, only the app's SOUND.
+            let scopeLine = self.opts.audioOnly
+                ? (self.opts.appName.map { "audio of app \"\($0)\"" } ?? "all system audio")
+                : scope
             FileHandle.standardError.write("""
-            ● recording \(scope) → \(self.opts.outPath)
+            ● recording \(scopeLine) → \(self.opts.outPath)
             \(micLine)
               stop & finalize: Ctrl-C  (or type q + Enter)   ·   toggle mic: kill -USR1 \(pid)
 
@@ -504,30 +535,38 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
     func setupWriter(width: Int, height: Int) {
         let url = URL(fileURLWithPath: opts.outPath)
         try? FileManager.default.removeItem(at: url)
-        do { writer = try AVAssetWriter(outputURL: url, fileType: .mov) }
+        // Audio-only writes a .m4a (an MPEG-4 audio container, no video track at all);
+        // the video path writes a .mov that carries H.264 video alongside the audio.
+        do { writer = try AVAssetWriter(outputURL: url, fileType: opts.audioOnly ? .m4a : .mov) }
         catch { err("AVAssetWriter: \(error.localizedDescription)") }
 
-        let vSettings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: width,
-            AVVideoHeightKey: height,
-        ]
-        videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: vSettings)
-        videoInput.expectsMediaDataInRealTime = true
-        writer.add(videoInput)
-
-        // Any compositing — the webcam corner, the click counter, or both — means we
-        // build each output frame ourselves and feed the video input through a
-        // pixel-buffer adaptor instead of passing raw screen sample buffers straight in.
-        if opts.pip || opts.clicks {
-            let attrs: [String: Any] = [
-                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
-                kCVPixelBufferWidthKey as String: width,
-                kCVPixelBufferHeightKey as String: height,
+        // The picture is optional. In --audio-only there is no video track, so the
+        // writer is handed two audio tracks and nothing else — a real, playable
+        // audio file rather than a video with the screen removed.
+        if !opts.audioOnly {
+            let vSettings: [String: Any] = [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height,
             ]
-            videoAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput,
-                                                                sourcePixelBufferAttributes: attrs)
-            ciContext = CIContext(options: [.cacheIntermediates: false])
+            let v = AVAssetWriterInput(mediaType: .video, outputSettings: vSettings)
+            v.expectsMediaDataInRealTime = true
+            writer.add(v)
+            videoInput = v
+
+            // Any compositing — the webcam corner, the click counter, or both — means we
+            // build each output frame ourselves and feed the video input through a
+            // pixel-buffer adaptor instead of passing raw screen sample buffers straight in.
+            if opts.pip || opts.clicks {
+                let attrs: [String: Any] = [
+                    kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+                    kCVPixelBufferWidthKey as String: width,
+                    kCVPixelBufferHeightKey as String: height,
+                ]
+                videoAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: v,
+                                                                    sourcePixelBufferAttributes: attrs)
+                ciContext = CIContext(options: [.cacheIntermediates: false])
+            }
         }
 
         let aSettings: [String: Any] = [
@@ -572,7 +611,9 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
         lock.unlock()
 
         // Track the video timeline so we can report the final recording length on stop.
-        if type == .screen {
+        // In --audio-only there is no video at all, so the length comes off the audio
+        // timeline instead — same numbers, different clock.
+        if type == .screen || (opts.audioOnly && type == .audio) {
             if firstPTS == nil { firstPTS = pts }
             lastPTS = pts
         }
@@ -581,8 +622,8 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
         case .screen:
             if opts.pip || opts.clicks, let px = CMSampleBufferGetImageBuffer(sampleBuffer) {
                 compositeFrame(screen: px, pts: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
-            } else if videoInput.isReadyForMoreMediaData {
-                videoInput.append(sampleBuffer); hBump(1)
+            } else if let v = videoInput, v.isReadyForMoreMediaData {
+                v.append(sampleBuffer); hBump(1)
             } else {
                 hBump(3)   // encoder starved — this is the drop that used to be silent
             }
@@ -645,10 +686,10 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
     /// click counter (--clicks), and append it. If an overlay can't be produced the screen
     /// frame is appended unchanged — a recording is never lost to a decoration.
     func compositeFrame(screen: CVPixelBuffer, pts: CMTime) {
-        guard let adaptor = videoAdaptor, let ctx = ciContext else { return }
+        guard let adaptor = videoAdaptor, let ctx = ciContext, videoInput != nil else { return }
         guard adaptor.assetWriterInput.isReadyForMoreMediaData else { hBump(3); return }
         guard let pool = adaptor.pixelBufferPool else {
-            if videoInput.isReadyForMoreMediaData { adaptor.append(screen, withPresentationTime: pts); hBump(1) } else { hBump(3) }
+            if videoInput?.isReadyForMoreMediaData == true { adaptor.append(screen, withPresentationTime: pts); hBump(1) } else { hBump(3) }
             return
         }
         var outBuf: CVPixelBuffer?
@@ -856,7 +897,9 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
 
                 let s = SCStream(filter: filter, configuration: self.cfg, delegate: self)
                 do {
-                    try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: self.sampleQueue)
+                    if !self.opts.audioOnly {
+                        try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: self.sampleQueue)
+                    }
                     try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: self.sampleQueue)
                     try s.addStreamOutput(self, type: .microphone, sampleHandlerQueue: self.sampleQueue)
                 } catch {
@@ -1114,7 +1157,10 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
             FileHandle.standardError.write("auto-flatten: rec-audio not found next to the recorder — skipping YouTube version\n".data(using: .utf8)!)
             return nil
         }
-        let flatPath = (inPath as NSString).deletingPathExtension + "-flat.mov"
+        // The flattened file keeps the shape of its source: an audio-only recording
+        // flattens to an audio-only file (.m4a), not to a .mov with no picture in it.
+        let flatExt = opts.audioOnly ? "m4a" : "mov"
+        let flatPath = (inPath as NSString).deletingPathExtension + "-flat." + flatExt
         FileHandle.standardError.write("⧉ making YouTube version (system + mic mixed) → \((flatPath as NSString).lastPathComponent) …\n".data(using: .utf8)!)
         let p = Process()
         p.launchPath = recAudio
@@ -1218,7 +1264,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
         stream?.stopCapture { [weak self] _ in
             guard let self else { return }
             self.sampleQueue.async {
-                self.videoInput.markAsFinished()
+                self.videoInput?.markAsFinished()
                 self.sysAudioInput.markAsFinished()
                 self.micInput?.markAsFinished()
                 self.writer.finishWriting {
@@ -1249,6 +1295,14 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
                                 subOut = subbed; revealTarget = subbed
                                 let srt = (subInput as NSString).deletingPathExtension + ".srt"
                                 if FileManager.default.fileExists(atPath: srt) { srtOut = srt }
+                            } else if self.opts.audioOnly {
+                                // No picture, so nothing to burn into — but the transcript
+                                // itself is the deliverable here, and it was still written.
+                                let srt = (subInput as NSString).deletingPathExtension + ".srt"
+                                if FileManager.default.fileExists(atPath: srt) {
+                                    srtOut = srt
+                                    print("✓ transcript: \(srt)")
+                                }
                             }
                         }
                         // Emit the typed handoff so consumers never parse the prose above.
