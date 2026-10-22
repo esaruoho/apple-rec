@@ -882,12 +882,19 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureVideo
                     return
                 }
                 let display = content.displays[self.opts.displayIndex]
-                let (pw, ph) = self.pixelSize(of: display)
-                guard pw == self.writerWidth, ph == self.writerHeight else {
-                    self.giveUp("the display resolution changed mid-recording "
-                                + "(\(self.writerWidth)x\(self.writerHeight) → \(pw)x\(ph)) — "
-                                + "the file already committed to the old size")
-                    return
+                // In audio-only mode the writer is deliberately 2x2 (there is no video
+                // track at all), so comparing the display's real pixel size against it
+                // is meaningless — it ALWAYS mismatches, which turned every
+                // ScreenCaptureKit blip into a hard stop that cut the take short. There
+                // is no committed video size to protect, so skip the check entirely.
+                if !self.opts.audioOnly {
+                    let (pw, ph) = self.pixelSize(of: display)
+                    guard pw == self.writerWidth, ph == self.writerHeight else {
+                        self.giveUp("the display resolution changed mid-recording "
+                                    + "(\(self.writerWidth)x\(self.writerHeight) → \(pw)x\(ph)) — "
+                                    + "the file already committed to the old size")
+                        return
+                    }
                 }
                 guard let filter = self.makeFilter(display, content) else {
                     self.giveUp("\"\(self.opts.appName ?? "")\" is no longer running")
